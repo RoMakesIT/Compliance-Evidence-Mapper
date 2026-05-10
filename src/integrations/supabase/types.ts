@@ -7,12 +7,7 @@ export type Json =
   | Json[]
 
 export type Database = {
-  // Allows to automatically instantiate createClient with right options
-  // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
-  __InternalSupabase: {
-    PostgrestVersion: "14.5"
-  }
-  public: {
+  graphql_public: {
     Tables: {
       [_ in never]: never
     }
@@ -20,10 +15,543 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      graphql: {
+        Args: {
+          extensions?: Json
+          operationName?: string
+          query?: string
+          variables?: Json
+        }
+        Returns: Json
+      }
     }
     Enums: {
       [_ in never]: never
+    }
+    CompositeTypes: {
+      [_ in never]: never
+    }
+  }
+  public: {
+    Tables: {
+      companies: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          id: string
+          industry: string | null
+          name: string
+          notes: string | null
+          slug: string | null
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          industry?: string | null
+          name: string
+          notes?: string | null
+          slug?: string | null
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          industry?: string | null
+          name?: string
+          notes?: string | null
+          slug?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      company_controls: {
+        Row: {
+          company_id: string
+          control_id: string
+          created_at: string
+          due_date: string | null
+          id: string
+          notes: string | null
+          owner_user_id: string | null
+          status: Database["public"]["Enums"]["company_control_status"]
+          updated_at: string
+        }
+        Insert: {
+          company_id: string
+          control_id: string
+          created_at?: string
+          due_date?: string | null
+          id?: string
+          notes?: string | null
+          owner_user_id?: string | null
+          status?: Database["public"]["Enums"]["company_control_status"]
+          updated_at?: string
+        }
+        Update: {
+          company_id?: string
+          control_id?: string
+          created_at?: string
+          due_date?: string | null
+          id?: string
+          notes?: string | null
+          owner_user_id?: string | null
+          status?: Database["public"]["Enums"]["company_control_status"]
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "company_controls_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "company_controls_control_id_fkey"
+            columns: ["control_id"]
+            isOneToOne: false
+            referencedRelation: "controls"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      company_members: {
+        Row: {
+          company_id: string
+          created_at: string
+          role: Database["public"]["Enums"]["company_role"]
+          user_id: string
+        }
+        Insert: {
+          company_id: string
+          created_at?: string
+          role?: Database["public"]["Enums"]["company_role"]
+          user_id: string
+        }
+        Update: {
+          company_id?: string
+          created_at?: string
+          role?: Database["public"]["Enums"]["company_role"]
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "company_members_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      controls: {
+        Row: {
+          control_ref: string
+          control_type: Database["public"]["Enums"]["control_type"]
+          created_at: string
+          description: string | null
+          domain: string | null
+          evidence_examples: string | null
+          evidence_keywords: string | null
+          framework_id: string
+          id: string
+          parent_control_id: string | null
+          recommendation_template: string | null
+          source: string | null
+          title: string | null
+          updated_at: string
+        }
+        Insert: {
+          control_ref: string
+          control_type?: Database["public"]["Enums"]["control_type"]
+          created_at?: string
+          description?: string | null
+          domain?: string | null
+          evidence_examples?: string | null
+          evidence_keywords?: string | null
+          framework_id: string
+          id?: string
+          parent_control_id?: string | null
+          recommendation_template?: string | null
+          source?: string | null
+          title?: string | null
+          updated_at?: string
+        }
+        Update: {
+          control_ref?: string
+          control_type?: Database["public"]["Enums"]["control_type"]
+          created_at?: string
+          description?: string | null
+          domain?: string | null
+          evidence_examples?: string | null
+          evidence_keywords?: string | null
+          framework_id?: string
+          id?: string
+          parent_control_id?: string | null
+          recommendation_template?: string | null
+          source?: string | null
+          title?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "controls_framework_id_fkey"
+            columns: ["framework_id"]
+            isOneToOne: false
+            referencedRelation: "frameworks"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "controls_parent_control_id_fkey"
+            columns: ["parent_control_id"]
+            isOneToOne: false
+            referencedRelation: "controls"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      crosswalks: {
+        Row: {
+          created_at: string
+          id: string
+          mapping_type: Database["public"]["Enums"]["crosswalk_mapping_type"]
+          notes: string | null
+          source_control_id: string
+          target_control_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          mapping_type?: Database["public"]["Enums"]["crosswalk_mapping_type"]
+          notes?: string | null
+          source_control_id: string
+          target_control_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          mapping_type?: Database["public"]["Enums"]["crosswalk_mapping_type"]
+          notes?: string | null
+          source_control_id?: string
+          target_control_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "crosswalks_source_control_id_fkey"
+            columns: ["source_control_id"]
+            isOneToOne: false
+            referencedRelation: "controls"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "crosswalks_target_control_id_fkey"
+            columns: ["target_control_id"]
+            isOneToOne: false
+            referencedRelation: "controls"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      evidence: {
+        Row: {
+          collected_at: string | null
+          collected_by: string | null
+          company_id: string
+          created_at: string
+          description: string | null
+          expires_at: string | null
+          file_size: number | null
+          id: string
+          mime_type: string | null
+          status: Database["public"]["Enums"]["evidence_status"]
+          storage_path: string | null
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          collected_at?: string | null
+          collected_by?: string | null
+          company_id: string
+          created_at?: string
+          description?: string | null
+          expires_at?: string | null
+          file_size?: number | null
+          id?: string
+          mime_type?: string | null
+          status?: Database["public"]["Enums"]["evidence_status"]
+          storage_path?: string | null
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          collected_at?: string | null
+          collected_by?: string | null
+          company_id?: string
+          created_at?: string
+          description?: string | null
+          expires_at?: string | null
+          file_size?: number | null
+          id?: string
+          mime_type?: string | null
+          status?: Database["public"]["Enums"]["evidence_status"]
+          storage_path?: string | null
+          title?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "evidence_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      evidence_controls: {
+        Row: {
+          company_control_id: string
+          evidence_id: string
+          tagged_at: string
+          tagged_by: string | null
+        }
+        Insert: {
+          company_control_id: string
+          evidence_id: string
+          tagged_at?: string
+          tagged_by?: string | null
+        }
+        Update: {
+          company_control_id?: string
+          evidence_id?: string
+          tagged_at?: string
+          tagged_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "evidence_controls_company_control_id_fkey"
+            columns: ["company_control_id"]
+            isOneToOne: false
+            referencedRelation: "company_controls"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "evidence_controls_evidence_id_fkey"
+            columns: ["evidence_id"]
+            isOneToOne: false
+            referencedRelation: "evidence"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      frameworks: {
+        Row: {
+          created_at: string
+          description: string | null
+          id: string
+          name: string
+          slug: string
+          version: string | null
+        }
+        Insert: {
+          created_at?: string
+          description?: string | null
+          id?: string
+          name: string
+          slug: string
+          version?: string | null
+        }
+        Update: {
+          created_at?: string
+          description?: string | null
+          id?: string
+          name?: string
+          slug?: string
+          version?: string | null
+        }
+        Relationships: []
+      }
+      profiles: {
+        Row: {
+          created_at: string
+          default_company_id: string | null
+          display_name: string | null
+          id: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          default_company_id?: string | null
+          display_name?: string | null
+          id: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          default_company_id?: string | null
+          display_name?: string | null
+          id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "profiles_default_company_fk"
+            columns: ["default_company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      recommendations: {
+        Row: {
+          company_id: string
+          control_id: string | null
+          created_at: string
+          details: string | null
+          id: string
+          severity: Database["public"]["Enums"]["recommendation_severity"]
+          status: Database["public"]["Enums"]["recommendation_status"]
+          summary: string
+          updated_at: string
+        }
+        Insert: {
+          company_id: string
+          control_id?: string | null
+          created_at?: string
+          details?: string | null
+          id?: string
+          severity?: Database["public"]["Enums"]["recommendation_severity"]
+          status?: Database["public"]["Enums"]["recommendation_status"]
+          summary: string
+          updated_at?: string
+        }
+        Update: {
+          company_id?: string
+          control_id?: string | null
+          created_at?: string
+          details?: string | null
+          id?: string
+          severity?: Database["public"]["Enums"]["recommendation_severity"]
+          status?: Database["public"]["Enums"]["recommendation_status"]
+          summary?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "recommendations_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "recommendations_control_id_fkey"
+            columns: ["control_id"]
+            isOneToOne: false
+            referencedRelation: "controls"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      reviews: {
+        Row: {
+          created_at: string
+          evidence_id: string
+          id: string
+          notes: string | null
+          reviewed_at: string | null
+          reviewer_user_id: string | null
+          status: Database["public"]["Enums"]["review_status"]
+        }
+        Insert: {
+          created_at?: string
+          evidence_id: string
+          id?: string
+          notes?: string | null
+          reviewed_at?: string | null
+          reviewer_user_id?: string | null
+          status?: Database["public"]["Enums"]["review_status"]
+        }
+        Update: {
+          created_at?: string
+          evidence_id?: string
+          id?: string
+          notes?: string | null
+          reviewed_at?: string | null
+          reviewer_user_id?: string | null
+          status?: Database["public"]["Enums"]["review_status"]
+        }
+        Relationships: [
+          {
+            foreignKeyName: "reviews_evidence_id_fkey"
+            columns: ["evidence_id"]
+            isOneToOne: false
+            referencedRelation: "evidence"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+    }
+    Views: {
+      [_ in never]: never
+    }
+    Functions: {
+      create_company: {
+        Args: {
+          p_industry?: string
+          p_name: string
+          p_notes?: string
+          p_slug?: string
+        }
+        Returns: {
+          created_at: string
+          created_by: string | null
+          id: string
+          industry: string | null
+          name: string
+          notes: string | null
+          slug: string | null
+          updated_at: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "companies"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      has_company_role: {
+        Args: {
+          p_company_id: string
+          p_roles: Database["public"]["Enums"]["company_role"][]
+        }
+        Returns: boolean
+      }
+      is_company_member: { Args: { p_company_id: string }; Returns: boolean }
+    }
+    Enums: {
+      company_control_status:
+        | "not_started"
+        | "in_progress"
+        | "implemented"
+        | "not_applicable"
+      company_role: "owner" | "admin" | "contributor" | "viewer"
+      control_type: "parent" | "child" | "standalone"
+      crosswalk_mapping_type:
+        | "direct"
+        | "inherited"
+        | "effective"
+        | "related"
+        | "equivalent"
+        | "partial"
+      evidence_status: "draft" | "in_review" | "finalized" | "rejected"
+      recommendation_severity: "low" | "med" | "high" | "critical"
+      recommendation_status: "open" | "in_progress" | "resolved" | "dismissed"
+      review_status: "pending" | "approved" | "rejected"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -149,7 +677,32 @@ export type CompositeTypes<
     : never
 
 export const Constants = {
-  public: {
+  graphql_public: {
     Enums: {},
   },
+  public: {
+    Enums: {
+      company_control_status: [
+        "not_started",
+        "in_progress",
+        "implemented",
+        "not_applicable",
+      ],
+      company_role: ["owner", "admin", "contributor", "viewer"],
+      control_type: ["parent", "child", "standalone"],
+      crosswalk_mapping_type: [
+        "direct",
+        "inherited",
+        "effective",
+        "related",
+        "equivalent",
+        "partial",
+      ],
+      evidence_status: ["draft", "in_review", "finalized", "rejected"],
+      recommendation_severity: ["low", "med", "high", "critical"],
+      recommendation_status: ["open", "in_progress", "resolved", "dismissed"],
+      review_status: ["pending", "approved", "rejected"],
+    },
+  },
 } as const
+
