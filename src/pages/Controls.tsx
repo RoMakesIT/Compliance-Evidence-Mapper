@@ -273,18 +273,25 @@ export default function Controls() {
               </SelectContent>
             </Select>
           </div>
-          <SourceFilterChips
-            selected={selectedSources}
-            onToggle={(v) => {
-              setSelectedSources((prev) => {
-                const next = new Set(prev);
-                if (next.has(v)) next.delete(v);
-                else next.add(v);
-                return next;
-              });
-            }}
-            onClear={() => setSelectedSources(new Set())}
-          />
+          <div className="flex flex-wrap items-center gap-2">
+            <SourceFilterChips
+              selected={selectedSources}
+              onToggle={(v) => {
+                setSelectedSources((prev) => {
+                  const next = new Set(prev);
+                  if (next.has(v)) next.delete(v);
+                  else next.add(v);
+                  return next;
+                });
+              }}
+              onClear={() => setSelectedSources(new Set())}
+            />
+            <span className="ml-auto text-xs text-muted-foreground">
+              {filtered.length === controls.length
+                ? `${controls.length} controls`
+                : `${filtered.length} of ${controls.length} controls`}
+            </span>
+          </div>
         </CardContent>
       </Card>
 
@@ -292,7 +299,7 @@ export default function Controls() {
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead className="w-8"></TableHead>
+              <TableHead className="w-12"></TableHead>
               <TableHead className="w-28">Code</TableHead>
               <TableHead className="w-40">Domain</TableHead>
               <TableHead>Description</TableHead>
@@ -324,8 +331,13 @@ export default function Controls() {
                       <TableRow className="font-medium cursor-pointer hover:bg-muted/40" onClick={() => setSheetControl(p)}>
                         <TableCell onClick={(e) => e.stopPropagation()}>
                           {kids.length > 0 && (
-                            <button onClick={() => toggle(p.id)} className="p-0.5">
+                            <button
+                              onClick={() => toggle(p.id)}
+                              className="inline-flex items-center gap-0.5 p-0.5 text-xs text-muted-foreground hover:text-foreground"
+                              title={`${kids.length} child control${kids.length === 1 ? "" : "s"}`}
+                            >
                               {isOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                              <span className="tabular-nums">{kids.length}</span>
                             </button>
                           )}
                         </TableCell>
