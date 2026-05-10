@@ -46,3 +46,6 @@ supabase/.temp
 # Misc
 .cache
 *.tsbuildinfo
+
+# Local backups produced by bin/backup.sh
+backups/

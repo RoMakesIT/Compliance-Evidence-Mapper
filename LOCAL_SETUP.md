@@ -70,23 +70,30 @@ git push -u origin main
 
 ## Daily development
 
+### Easiest: double-click apps
+
+After running `mac/build-apps.sh` once, three apps live in `~/Applications`:
+
+- **Compliance Compass — Start** — launches Docker if needed, starts Supabase, runs the dev server. Opens http://localhost:8080.
+- **Compliance Compass — Stop** — stops Vite and the Supabase stack.
+- **Compliance Compass — Backup** — snapshots the Postgres DB + the storage bucket to `backups/<timestamp>/`. Includes a `RESTORE.md` next to each snapshot.
+
+Drag any of them onto the Dock for a one-click on/off. Re-run `mac/build-apps.sh` after moving the project folder — the apps encode an absolute path.
+
+### Or from the terminal
+
 ```bash
-cd ~/Documents/Claude/Projects/Compliance\ compass/Compliance-Evidence-Mapper
-
-# Start Supabase (Docker must be running)
-supabase start
-# Note the API URL and anon key in the output — they should match .env.local
-
-# Start the Vite dev server
-npm run dev
-# Open http://localhost:8080
+./bin/start.sh    # Docker + Supabase + Vite
+./bin/stop.sh     # stops Vite + Supabase
+./bin/backup.sh   # writes backups/YYYYMMDD-HHMMSS/
 ```
 
-To stop:
+### Or by hand
 
 ```bash
-# Ctrl+C the Vite server
-supabase stop
+supabase start      # Supabase services in Docker
+npm run dev         # Vite at http://localhost:8080
+# Ctrl+C, then `supabase stop` when done
 ```
 
 ## Working with the database
@@ -107,6 +114,17 @@ supabase migration up
 # Regenerate TypeScript types from the local schema
 supabase gen types typescript --local > src/integrations/supabase/types.ts
 ```
+
+## Backups
+
+`./bin/backup.sh` (or the **Compliance Compass — Backup** app) writes a snapshot to `backups/<timestamp>/`:
+
+- `db.dump` — `pg_dump -Fc` of the entire local Postgres (covers schemas `public`, `auth`, `storage`, etc.)
+- `storage.tar.gz` — every file in the storage container's bucket directory
+- `migrations/` — copy of the migrations that were applied at backup time
+- `RESTORE.md` — paste-ready commands to restore onto a fresh stack
+
+`backups/` is gitignored. Move them off this Mac periodically if your evidence matters — Time Machine, an external drive, or a cloud sync of just `~/compliance compass/Compliance-Evidence-Mapper/backups/`.
 
 ## Working with Claude Code
 
