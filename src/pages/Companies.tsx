@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
+import { Check } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth";
@@ -24,7 +25,7 @@ import { useActiveCompany } from "@/lib/active-company";
 
 export default function Companies() {
   const { user } = useAuth();
-  const { companies, loading, setActiveCompanyId } = useActiveCompany();
+  const { companies, activeCompany, loading, setActiveCompanyId } = useActiveCompany();
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState({ name: "", industry: "", notes: "" });
@@ -119,29 +120,51 @@ export default function Companies() {
           <Table>
             <TableHeader>
               <TableRow>
+                <TableHead className="w-28"></TableHead>
                 <TableHead>Name</TableHead>
                 <TableHead>Industry</TableHead>
                 <TableHead>Role</TableHead>
                 <TableHead>Created</TableHead>
+                <TableHead className="w-32"></TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {companies.map((c) => (
-                <TableRow
-                  key={c.id}
-                  className="cursor-pointer hover:bg-muted/40"
-                  onClick={() => setActiveCompanyId(c.id)}
-                >
-                  <TableCell className="font-medium">{c.name}</TableCell>
-                  <TableCell className="text-muted-foreground">{c.industry || "—"}</TableCell>
-                  <TableCell>
-                    <Badge variant="secondary">{c.role}</Badge>
-                  </TableCell>
-                  <TableCell className="text-muted-foreground text-xs">
-                    {new Date(c.created_at).toLocaleDateString()}
-                  </TableCell>
-                </TableRow>
-              ))}
+              {companies.map((c) => {
+                const isActive = c.id === activeCompany?.id;
+                return (
+                  <TableRow key={c.id} className={isActive ? "bg-muted/40" : ""}>
+                    <TableCell>
+                      {isActive ? (
+                        <Badge className="gap-1">
+                          <Check className="h-3 w-3" /> Active
+                        </Badge>
+                      ) : null}
+                    </TableCell>
+                    <TableCell className="font-medium">{c.name}</TableCell>
+                    <TableCell className="text-muted-foreground">{c.industry || "—"}</TableCell>
+                    <TableCell>
+                      <Badge variant="secondary">{c.role}</Badge>
+                    </TableCell>
+                    <TableCell className="text-muted-foreground text-xs">
+                      {new Date(c.created_at).toLocaleDateString()}
+                    </TableCell>
+                    <TableCell>
+                      {!isActive && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => {
+                            setActiveCompanyId(c.id);
+                            toast({ title: "Active workspace", description: c.name });
+                          }}
+                        >
+                          Set active
+                        </Button>
+                      )}
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
             </TableBody>
           </Table>
         </Card>
