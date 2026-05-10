@@ -28,7 +28,7 @@ const nav = [
   { to: "/companies", label: "Companies", icon: Building2 },
   { to: "/controls", label: "Controls", icon: ShieldCheck },
   { to: "/evidence", label: "Evidence", icon: FileText },
-  { to: "/review", label: "Review", icon: ClipboardCheck },
+  { to: "/review", label: "Mappings", icon: ClipboardCheck },
   { to: "/recommendations", label: "Recommendations", icon: Lightbulb },
   { to: "/crosswalk", label: "Crosswalk", icon: GitCompare },
   { to: "/settings", label: "Settings", icon: Settings },
