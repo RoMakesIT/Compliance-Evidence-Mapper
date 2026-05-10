@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import Layout from "@/components/Layout";
@@ -83,6 +83,9 @@ export default function EvidencePage() {
   const [pickerEvidence, setPickerEvidence] = useState<EvidenceWithTags | null>(null);
   const [editingEvidence, setEditingEvidence] = useState<EvidenceWithTags | null>(null);
   const [editForm, setEditForm] = useState({ title: "", description: "", source_system: "" });
+  const [search, setSearch] = useState("");
+  const [sourceFilter, setSourceFilter] = useState<string>("all");
+  const [tagFilter, setTagFilter] = useState<"all" | "tagged" | "untagged">("all");
 
   const evidenceQuery = useQuery({
     queryKey: ["evidence", activeCompany?.id],
@@ -273,6 +276,17 @@ export default function EvidencePage() {
   }
 
   const evidence = evidenceQuery.data ?? [];
+  const filteredEvidence = useMemo(() => {
+    const q = search.toLowerCase().trim();
+    return evidence.filter((ev) => {
+      if (sourceFilter !== "all" && (ev.source_system ?? "") !== sourceFilter) return false;
+      if (tagFilter === "tagged" && ev.tags.length === 0) return false;
+      if (tagFilter === "untagged" && ev.tags.length > 0) return false;
+      if (!q) return true;
+      const blob = `${ev.title} ${ev.description ?? ""} ${ev.source_system ?? ""} ${ev.storage_path ?? ""}`.toLowerCase();
+      return blob.includes(q);
+    });
+  }, [evidence, search, sourceFilter, tagFilter]);
 
   return (
     <Layout>
@@ -344,7 +358,41 @@ export default function EvidencePage() {
 
         <Card>
           <CardContent className="p-0">
-            <div className="px-5 py-3 border-b text-sm font-medium">Evidence ({evidence.length})</div>
+            <div className="px-5 py-3 border-b flex flex-wrap items-center gap-2">
+              <div className="text-sm font-medium">
+                Evidence{" "}
+                <span className="text-muted-foreground font-normal">
+                  ({filteredEvidence.length === evidence.length
+                    ? evidence.length
+                    : `${filteredEvidence.length} of ${evidence.length}`})
+                </span>
+              </div>
+              <div className="ml-auto flex flex-wrap items-center gap-2">
+                <Input
+                  placeholder="Search title, description…"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  className="h-8 max-w-[200px]"
+                />
+                <Select value={sourceFilter} onValueChange={setSourceFilter}>
+                  <SelectTrigger className="w-32 h-8 text-xs"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All sources</SelectItem>
+                    {SOURCE_SYSTEMS.map((s) => (
+                      <SelectItem key={s} value={s}>{s}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Select value={tagFilter} onValueChange={(v) => setTagFilter(v as typeof tagFilter)}>
+                  <SelectTrigger className="w-32 h-8 text-xs"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All evidence</SelectItem>
+                    <SelectItem value="tagged">Tagged</SelectItem>
+                    <SelectItem value="untagged">Untagged</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
             <Table>
               <TableHeader>
                 <TableRow>
@@ -363,14 +411,14 @@ export default function EvidencePage() {
                       Loading…
                     </TableCell>
                   </TableRow>
-                ) : evidence.length === 0 ? (
+                ) : filteredEvidence.length === 0 ? (
                   <TableRow>
                     <TableCell colSpan={6} className="text-center text-sm text-muted-foreground py-8">
-                      No evidence yet.
+                      {evidence.length === 0 ? "No evidence yet." : "No evidence matches the current filters."}
                     </TableCell>
                   </TableRow>
                 ) : (
-                  evidence.map((ev) => (
+                  filteredEvidence.map((ev) => (
                     <TableRow key={ev.id}>
                       <TableCell className="font-medium align-top">
                         <div>{ev.title}</div>

@@ -52,6 +52,7 @@ export default function Recommendations() {
   const qc = useQueryClient();
   const [statusFilter, setStatusFilter] = useState<"all" | Enums<"recommendation_status">>("all");
   const [severityFilter, setSeverityFilter] = useState<"all" | Enums<"recommendation_severity">>("all");
+  const [domainFilter, setDomainFilter] = useState<string>("all");
   const [search, setSearch] = useState("");
   const [selectedSources, setSelectedSources] = useState<Set<string>>(new Set());
 
@@ -146,11 +147,16 @@ export default function Recommendations() {
   });
 
   const recs = recsQuery.data ?? [];
+  const domains = useMemo(
+    () => Array.from(new Set(recs.map((r) => r.control?.domain ?? "").filter(Boolean))).sort(),
+    [recs],
+  );
   const filtered = useMemo(() => {
     const q = search.toLowerCase().trim();
     return recs.filter((r) => {
       if (statusFilter !== "all" && r.status !== statusFilter) return false;
       if (severityFilter !== "all" && r.severity !== severityFilter) return false;
+      if (domainFilter !== "all" && r.control?.domain !== domainFilter) return false;
       if (selectedSources.size > 0) {
         const hits = r.control?.source_hints ?? [];
         if (!hits.some((h) => selectedSources.has(h))) return false;
@@ -159,7 +165,7 @@ export default function Recommendations() {
       const blob = `${r.control?.control_ref ?? ""} ${r.control?.domain ?? ""} ${r.control?.description ?? ""} ${r.summary} ${r.details ?? ""}`.toLowerCase();
       return blob.includes(q);
     });
-  }, [recs, statusFilter, severityFilter, search, selectedSources]);
+  }, [recs, statusFilter, severityFilter, domainFilter, search, selectedSources]);
 
   function exportCSV() {
     if (!activeCompany) return;
@@ -233,6 +239,13 @@ export default function Recommendations() {
               <SelectContent>
                 <SelectItem value="all">All severities</SelectItem>
                 {SEVERITIES.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+              </SelectContent>
+            </Select>
+            <Select value={domainFilter} onValueChange={setDomainFilter}>
+              <SelectTrigger className="w-44 h-8 text-xs"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All domains</SelectItem>
+                {domains.map((d) => <SelectItem key={d} value={d}>{d}</SelectItem>)}
               </SelectContent>
             </Select>
             <span className="text-xs text-muted-foreground ml-auto">

@@ -44,6 +44,15 @@ async function fetchSecureframeFrameworkId(): Promise<string> {
   return data.id;
 }
 
+async function fetchSoc2FrameworkId(): Promise<string | null> {
+  const { data } = await supabase
+    .from("frameworks")
+    .select("id")
+    .eq("slug", "soc2")
+    .maybeSingle();
+  return data?.id ?? null;
+}
+
 async function fetchSecureframeControls(): Promise<ControlRow[]> {
   const fwId = await fetchSecureframeFrameworkId();
   const { data, error } = await supabase
@@ -86,12 +95,16 @@ export default function Controls() {
   const [domain, setDomain] = useState("all");
   const [type, setType] = useState("all");
   const [evState, setEvState] = useState("all");
+  const [soc2, setSoc2] = useState("all");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [sheetControl, setSheetControl] = useState<ControlRow | null>(null);
   const [selectedSources, setSelectedSources] = useState<Set<string>>(new Set());
 
   const controlsQuery = useQuery({ queryKey: ["sf-controls"], queryFn: fetchSecureframeControls });
   const controls = controlsQuery.data ?? [];
+
+  const soc2FwQuery = useQuery({ queryKey: ["soc2-fw"], queryFn: fetchSoc2FrameworkId });
+  const soc2FwId = soc2FwQuery.data ?? null;
 
   const crosswalksQuery = useQuery({
     queryKey: ["sf-crosswalks", controls.map((c) => c.id)],
@@ -137,6 +150,19 @@ export default function Controls() {
     [controls],
   );
 
+  const soc2Refs = useMemo(() => {
+    if (!soc2FwId) return [] as string[];
+    const set = new Set<string>();
+    for (const cwList of crosswalksByControl.values()) {
+      for (const cw of cwList) {
+        if (cw.target?.framework_id === soc2FwId && cw.target?.control_ref) {
+          set.add(cw.target.control_ref);
+        }
+      }
+    }
+    return Array.from(set).sort();
+  }, [crosswalksByControl, soc2FwId]);
+
   const filtered = useMemo(() => {
     const q = search.toLowerCase().trim();
     return controls.filter((c) => {
@@ -150,13 +176,20 @@ export default function Controls() {
         const hits = c.source_hints ?? [];
         if (!hits.some((h) => selectedSources.has(h))) return false;
       }
+      if (soc2 !== "all" && soc2FwId) {
+        const cwList = crosswalksByControl.get(c.id) ?? [];
+        const matches = cwList.some(
+          (cw) => cw.target?.framework_id === soc2FwId && cw.target?.control_ref === soc2,
+        );
+        if (!matches) return false;
+      }
       if (q) {
         const blob = `${c.control_ref} ${c.description ?? ""} ${c.domain ?? ""}`.toLowerCase();
         if (!blob.includes(q)) return false;
       }
       return true;
     });
-  }, [controls, search, domain, type, evState, evidenceCountByControlId, selectedSources]);
+  }, [controls, search, domain, type, evState, evidenceCountByControlId, selectedSources, soc2, soc2FwId, crosswalksByControl]);
 
   const parents = filtered.filter((c) => !c.parent_control_id);
   const visibleParentIds = new Set(parents.map((p) => p.id));
@@ -270,6 +303,15 @@ export default function Controls() {
                 <SelectItem value="all">All evidence states</SelectItem>
                 <SelectItem value="has">Has evidence</SelectItem>
                 <SelectItem value="missing">Missing evidence</SelectItem>
+              </SelectContent>
+            </Select>
+            <Select value={soc2} onValueChange={setSoc2}>
+              <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All SOC 2</SelectItem>
+                {soc2Refs.map((r) => (
+                  <SelectItem key={r} value={r}>{r}</SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </div>

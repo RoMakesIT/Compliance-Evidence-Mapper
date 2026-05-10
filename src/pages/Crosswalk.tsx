@@ -25,7 +25,7 @@ type CrosswalkJoinRow = {
   mapping_type: string;
   source_control_id: string;
   target_control_id: string;
-  source: { control_ref: string; description: string | null; framework_id: string } | null;
+  source: { control_ref: string; description: string | null; domain: string | null; framework_id: string } | null;
   target: { control_ref: string; description: string | null; framework_id: string } | null;
 };
 
@@ -42,7 +42,7 @@ async function fetchCrosswalks(sourceFwId: string, targetFwId: string | null): P
   let query = supabase
     .from("crosswalks")
     .select(
-      "id, mapping_type, source_control_id, target_control_id, source:controls!crosswalks_source_control_id_fkey!inner(control_ref, description, framework_id), target:controls!crosswalks_target_control_id_fkey!inner(control_ref, description, framework_id)",
+      "id, mapping_type, source_control_id, target_control_id, source:controls!crosswalks_source_control_id_fkey!inner(control_ref, description, domain, framework_id), target:controls!crosswalks_target_control_id_fkey!inner(control_ref, description, framework_id)",
     )
     .eq("source.framework_id", sourceFwId);
   if (targetFwId) query = query.eq("target.framework_id", targetFwId);
@@ -63,6 +63,7 @@ export default function Crosswalk() {
   const [target, setTarget] = useState<string>(soc2Id);
   const [search, setSearch] = useState("");
   const [mappingType, setMappingType] = useState<string>("all");
+  const [domain, setDomain] = useState<string>("all");
 
   // Initialize defaults once frameworks load.
   useEffect(() => {
@@ -78,16 +79,21 @@ export default function Crosswalk() {
     enabled: !!source,
   });
 
+  const all = crosswalksQuery.data ?? [];
+  const sourceDomains = useMemo(
+    () => Array.from(new Set(all.map((cw) => cw.source?.domain ?? "").filter(Boolean))).sort(),
+    [all],
+  );
   const filtered = useMemo(() => {
-    const all = crosswalksQuery.data ?? [];
     const q = search.toLowerCase().trim();
     return all.filter((cw) => {
       if (mappingType !== "all" && cw.mapping_type !== mappingType) return false;
+      if (domain !== "all" && cw.source?.domain !== domain) return false;
       if (!q) return true;
       const blob = `${cw.source?.control_ref ?? ""} ${cw.target?.control_ref ?? ""} ${cw.source?.description ?? ""} ${cw.target?.description ?? ""}`.toLowerCase();
       return blob.includes(q);
     });
-  }, [crosswalksQuery.data, search, mappingType]);
+  }, [all, search, mappingType, domain]);
 
   function exportCSV() {
     const sourceName = frameworks.find((f) => f.id === source)?.name ?? "source";
@@ -151,6 +157,15 @@ export default function Crosswalk() {
               <SelectItem value="related">Related</SelectItem>
               <SelectItem value="equivalent">Equivalent</SelectItem>
               <SelectItem value="partial">Partial</SelectItem>
+            </SelectContent>
+          </Select>
+          <Select value={domain} onValueChange={setDomain}>
+            <SelectTrigger className="w-44 h-8 text-xs"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All source domains</SelectItem>
+              {sourceDomains.map((d) => (
+                <SelectItem key={d} value={d}>{d}</SelectItem>
+              ))}
             </SelectContent>
           </Select>
           <Input

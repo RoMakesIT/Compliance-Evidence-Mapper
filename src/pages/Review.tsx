@@ -8,11 +8,19 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Download } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useActiveCompany } from "@/lib/active-company";
 import { downloadCSV } from "@/lib/csv";
 import { toast } from "@/hooks/use-toast";
+import { SourceFilterChips } from "@/components/SourceFilterChips";
 
 type Mapping = {
   evidence_id: string;
@@ -23,6 +31,7 @@ type Mapping = {
   control_ref: string;
   control_domain: string | null;
   control_description: string | null;
+  control_source_hints: string[];
   tagged_at: string;
 };
 
@@ -32,7 +41,7 @@ async function fetchMappings(companyId: string): Promise<Mapping[]> {
   const { data, error } = await supabase
     .from("evidence")
     .select(
-      "id, title, description, storage_path, evidence_controls(tagged_at, company_controls(control:controls(id, control_ref, domain, description)))",
+      "id, title, description, storage_path, evidence_controls(tagged_at, company_controls(control:controls(id, control_ref, domain, description, source_hints)))",
     )
     .eq("company_id", companyId)
     .order("title", { ascending: true });
@@ -51,6 +60,7 @@ async function fetchMappings(companyId: string): Promise<Mapping[]> {
           control_ref: string;
           domain: string | null;
           description: string | null;
+          source_hints: string[] | null;
         } | null;
       } | null;
     }>;
@@ -70,6 +80,7 @@ async function fetchMappings(companyId: string): Promise<Mapping[]> {
         control_ref: c.control_ref,
         control_domain: c.domain,
         control_description: c.description,
+        control_source_hints: c.source_hints ?? [],
         tagged_at: ec.tagged_at,
       });
     }
@@ -81,6 +92,8 @@ export default function Review() {
   const { activeCompany } = useActiveCompany();
   const [search, setSearch] = useState("");
   const [groupBy, setGroupBy] = useState<"control" | "evidence">("control");
+  const [domain, setDomain] = useState<string>("all");
+  const [selectedSources, setSelectedSources] = useState<Set<string>>(new Set());
 
   const mappingsQuery = useQuery({
     queryKey: ["mappings", activeCompany?.id],
@@ -88,15 +101,25 @@ export default function Review() {
     enabled: !!activeCompany,
   });
 
+  const all = mappingsQuery.data ?? [];
+  const domains = useMemo(
+    () => Array.from(new Set(all.map((m) => m.control_domain ?? "").filter(Boolean))).sort(),
+    [all],
+  );
+
   const filtered = useMemo(() => {
-    const all = mappingsQuery.data ?? [];
     const q = search.toLowerCase().trim();
-    if (!q) return all;
     return all.filter((m) => {
+      if (domain !== "all" && m.control_domain !== domain) return false;
+      if (selectedSources.size > 0) {
+        const hits = m.control_source_hints ?? [];
+        if (!hits.some((h) => selectedSources.has(h))) return false;
+      }
+      if (!q) return true;
       const blob = `${m.control_ref} ${m.control_domain ?? ""} ${m.control_description ?? ""} ${m.evidence_title} ${m.evidence_description ?? ""}`.toLowerCase();
       return blob.includes(q);
     });
-  }, [mappingsQuery.data, search]);
+  }, [all, search, domain, selectedSources]);
 
   const sorted = useMemo(() => {
     const rows = [...filtered];
@@ -170,20 +193,30 @@ export default function Review() {
       />
 
       <Card className="mb-4">
-        <CardContent className="p-3 flex flex-wrap gap-2">
-          <Input
-            placeholder="Search control, evidence, domain…"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="max-w-sm"
-          />
-          <div className="ml-auto flex items-center gap-1">
-            <span className="text-xs text-muted-foreground">Sort by:</span>
-            <Button
-              size="sm"
-              variant={groupBy === "control" ? "secondary" : "ghost"}
-              onClick={() => setGroupBy("control")}
-            >
+        <CardContent className="p-3 space-y-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <Input
+              placeholder="Search control, evidence, domain…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="max-w-sm h-8"
+            />
+            <Select value={domain} onValueChange={setDomain}>
+              <SelectTrigger className="w-44 h-8 text-xs"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All domains</SelectItem>
+                {domains.map((d) => (
+                  <SelectItem key={d} value={d}>{d}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <div className="ml-auto flex items-center gap-1">
+              <span className="text-xs text-muted-foreground">Sort by:</span>
+              <Button
+                size="sm"
+                variant={groupBy === "control" ? "secondary" : "ghost"}
+                onClick={() => setGroupBy("control")}
+              >
               Control
             </Button>
             <Button
@@ -193,6 +226,26 @@ export default function Review() {
             >
               Evidence
             </Button>
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <SourceFilterChips
+              selected={selectedSources}
+              onToggle={(v) => {
+                setSelectedSources((prev) => {
+                  const next = new Set(prev);
+                  if (next.has(v)) next.delete(v);
+                  else next.add(v);
+                  return next;
+                });
+              }}
+              onClear={() => setSelectedSources(new Set())}
+            />
+            <span className="ml-auto text-xs text-muted-foreground">
+              {filtered.length === all.length
+                ? `${all.length} mappings`
+                : `${filtered.length} of ${all.length} mappings`}
+            </span>
           </div>
         </CardContent>
       </Card>
