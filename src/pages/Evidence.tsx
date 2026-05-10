@@ -10,7 +10,14 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Trash2, Upload, Tag, Download } from "lucide-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Trash2, Upload, Tag, Download, Pencil } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth";
@@ -61,6 +68,8 @@ export default function EvidencePage() {
 
   const [form, setForm] = useState({ title: "", description: "", file: null as File | null });
   const [pickerEvidence, setPickerEvidence] = useState<EvidenceWithTags | null>(null);
+  const [editingEvidence, setEditingEvidence] = useState<EvidenceWithTags | null>(null);
+  const [editForm, setEditForm] = useState({ title: "", description: "" });
 
   const evidenceQuery = useQuery({
     queryKey: ["evidence", activeCompany?.id],
@@ -121,6 +130,28 @@ export default function EvidencePage() {
     onError: (e: Error) => {
       toast({ title: "Upload failed", description: e.message, variant: "destructive" });
     },
+  });
+
+  const updateEvidence = useMutation({
+    mutationFn: async (input: { id: string; title: string; description: string }) => {
+      const { error } = await supabase
+        .from("evidence")
+        .update({
+          title: input.title.trim(),
+          description: input.description.trim() || null,
+        })
+        .eq("id", input.id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["evidence", activeCompany?.id] });
+      qc.invalidateQueries({ queryKey: ["mappings", activeCompany?.id] });
+      qc.invalidateQueries({ queryKey: ["control-evidence", activeCompany?.id] });
+      setEditingEvidence(null);
+      toast({ title: "Evidence updated" });
+    },
+    onError: (e: Error) =>
+      toast({ title: "Update failed", description: e.message, variant: "destructive" }),
   });
 
   const deleteEvidence = useMutation({
@@ -339,6 +370,17 @@ export default function EvidencePage() {
                             size="sm"
                             variant="ghost"
                             onClick={() => {
+                              setEditingEvidence(ev);
+                              setEditForm({ title: ev.title, description: ev.description ?? "" });
+                            }}
+                            title="Edit"
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => {
                               if (confirm(`Delete "${ev.title}"?`)) deleteEvidence.mutate(ev);
                             }}
                             title="Delete"
@@ -355,6 +397,61 @@ export default function EvidencePage() {
           </CardContent>
         </Card>
       </div>
+
+      <Dialog
+        open={!!editingEvidence}
+        onOpenChange={(o) => {
+          if (!o) setEditingEvidence(null);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Edit evidence</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <Label>Title</Label>
+              <Input
+                value={editForm.title}
+                onChange={(e) => setEditForm((p) => ({ ...p, title: e.target.value }))}
+              />
+            </div>
+            <div>
+              <Label>Description</Label>
+              <Textarea
+                rows={5}
+                value={editForm.description}
+                onChange={(e) => setEditForm((p) => ({ ...p, description: e.target.value }))}
+                placeholder="What does this evidence show? Keywords here are used for tag suggestions."
+              />
+            </div>
+            <p className="text-xs text-muted-foreground">
+              The title and description feed into the keyword scorer that powers the
+              "Suggested" controls in the tag picker — adding domain words here makes
+              future re-tagging more accurate. The file itself isn't replaced; delete and
+              re-upload to swap files.
+            </p>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setEditingEvidence(null)} disabled={updateEvidence.isPending}>
+              Cancel
+            </Button>
+            <Button
+              onClick={() => {
+                if (!editingEvidence || !editForm.title.trim()) return;
+                updateEvidence.mutate({
+                  id: editingEvidence.id,
+                  title: editForm.title,
+                  description: editForm.description,
+                });
+              }}
+              disabled={updateEvidence.isPending || !editForm.title.trim()}
+            >
+              {updateEvidence.isPending ? "Saving…" : "Save"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <ControlPicker
         open={!!pickerEvidence}
