@@ -161,6 +161,7 @@ export type Database = {
           parent_control_id: string | null
           recommendation_template: string | null
           source: string | null
+          source_hints: string[]
           title: string | null
           updated_at: string
         }
@@ -177,6 +178,7 @@ export type Database = {
           parent_control_id?: string | null
           recommendation_template?: string | null
           source?: string | null
+          source_hints?: string[]
           title?: string | null
           updated_at?: string
         }
@@ -193,6 +195,7 @@ export type Database = {
           parent_control_id?: string | null
           recommendation_template?: string | null
           source?: string | null
+          source_hints?: string[]
           title?: string | null
           updated_at?: string
         }
@@ -266,6 +269,7 @@ export type Database = {
           file_size: number | null
           id: string
           mime_type: string | null
+          source_system: string | null
           status: Database["public"]["Enums"]["evidence_status"]
           storage_path: string | null
           title: string
@@ -281,6 +285,7 @@ export type Database = {
           file_size?: number | null
           id?: string
           mime_type?: string | null
+          source_system?: string | null
           status?: Database["public"]["Enums"]["evidence_status"]
           storage_path?: string | null
           title: string
@@ -296,6 +301,7 @@ export type Database = {
           file_size?: number | null
           id?: string
           mime_type?: string | null
+          source_system?: string | null
           status?: Database["public"]["Enums"]["evidence_status"]
           storage_path?: string | null
           title?: string

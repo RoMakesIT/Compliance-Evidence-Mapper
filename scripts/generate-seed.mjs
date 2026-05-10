@@ -41,6 +41,40 @@ function sqlString(v) {
   return `'${String(v).replace(/'/g, "''")}'`;
 }
 
+function sqlTextArray(values) {
+  if (!values || values.length === 0) return `'{}'::text[]`;
+  const inner = values.map((v) => `"${String(v).replace(/"/g, '\\"')}"`).join(',');
+  return `'{${inner}}'::text[]`;
+}
+
+// -----------------------------------------------------------------------------
+// Source-system taxonomy + heuristic classifier
+// -----------------------------------------------------------------------------
+// Multi-match — a control can fall under several systems (e.g. MFA → Entra ID
+// + M365). Order doesn't matter; we collect every hit. If nothing matches we
+// fall back to "Upload" (manual evidence).
+const SOURCE_PATTERNS = [
+  { tag: 'Entra ID',       re: /\b(entra|azure ad|aad|active directory|sso|single sign[- ]on|conditional access|identity provider|idp|mfa|multi[- ]factor|passwordless|authenticator)\b/i },
+  { tag: 'M365',           re: /\b(m365|office ?365|microsoft ?365|sharepoint|exchange online|teams|onedrive|outlook)\b/i },
+  { tag: 'Intune',         re: /\b(intune|mdm|endpoint management|device compliance|mobile device|configuration profile|device enrollment|byod|antivirus|edr|patch)\b/i },
+  { tag: 'Azure',          re: /\b(azure|virtual machine|resource group|key vault|app service|infrastructure|cloud infrastructure|nsg|network security group|firewall|backup vault|recovery services)\b/i },
+  { tag: 'KnowBe4',        re: /\b(security awareness|awareness training|phishing simulation|phishing test|knowbe4|annual training|compliance training)\b/i },
+  { tag: 'Access Reviews', re: /\b(access review|recertif\w*|attestation|periodic review|quarterly review|annual review|user access|review.*access|review.*permissions|review.*entitlement|review.*privilege)\b/i },
+  { tag: 'Policy Doc',     re: /\b(polic\w+|procedure|documented|written|published|standard operating|charter|guidelines|handbook|sop)\b/i },
+];
+
+function classifySources(...texts) {
+  const blob = texts.filter(Boolean).join(' \n ');
+  const hits = [];
+  for (const { tag, re } of SOURCE_PATTERNS) {
+    if (re.test(blob)) hits.push(tag);
+  }
+  // Fallback to Upload (manual evidence) only when nothing else matched, so
+  // the chip filter for "Upload" actually narrows.
+  if (hits.length === 0) hits.push('Upload');
+  return hits;
+}
+
 const FRAMEWORKS = [
   { slug: 'secureframe',   name: 'Secureframe Baseline',  version: null,           description: 'Operative internal control catalog (Secureframe-derived).' },
   { slug: 'soc2',          name: 'SOC 2',                 version: 'Type II',      description: 'AICPA Trust Services Criteria.' },
@@ -148,15 +182,21 @@ for (const r of orderedRows) {
   const ctype  = parent ? 'child' : ((r['Control Type'] || '').toLowerCase().includes('parent') ? 'parent' : 'standalone');
   const id        = controlUuid('secureframe', code);
   const parentId  = parent ? controlUuid('secureframe', parent) : null;
+  const sourceHints = classifySources(
+    r['Description'],
+    r['Suggested Evidence Examples'],
+    r['Evidence Keywords'],
+    r['Domain'],
+  );
 
   out.push(
-    `insert into public.controls (id, framework_id, parent_control_id, control_ref, title, description, domain, control_type, recommendation_template, evidence_examples, evidence_keywords, source) values (` +
+    `insert into public.controls (id, framework_id, parent_control_id, control_ref, title, description, domain, control_type, recommendation_template, evidence_examples, evidence_keywords, source, source_hints) values (` +
     `${sqlString(id)}::uuid, ${sqlString(secureframeId)}::uuid, ` +
     `${parentId ? sqlString(parentId) + '::uuid' : 'null'}, ` +
     `${sqlString(code)}, ${sqlString(code)}, ${sqlString(r['Description'])}, ${sqlString(r['Domain'])}, ` +
     `${sqlString(ctype)}::public.control_type, ` +
     `${sqlString(r['Recommendation Template'])}, ${sqlString(r['Suggested Evidence Examples'])}, ${sqlString(r['Evidence Keywords'])}, ` +
-    `${sqlString(r['Source'])})` +
+    `${sqlString(r['Source'])}, ${sqlTextArray(sourceHints)})` +
     ` on conflict (framework_id, control_ref) do update set ` +
     `parent_control_id = excluded.parent_control_id, ` +
     `description = excluded.description, ` +
@@ -165,7 +205,8 @@ for (const r of orderedRows) {
     `recommendation_template = excluded.recommendation_template, ` +
     `evidence_examples = excluded.evidence_examples, ` +
     `evidence_keywords = excluded.evidence_keywords, ` +
-    `source = excluded.source;`
+    `source = excluded.source, ` +
+    `source_hints = excluded.source_hints;`
   );
 }
 out.push('');
