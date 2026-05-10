@@ -1,115 +1,249 @@
 import { useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Link } from "react-router-dom";
 import Layout from "@/components/Layout";
 import { PageHeader } from "@/components/PageHeader";
-import { useStore } from "@/lib/store";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Trash2, Sparkles, Upload } from "lucide-react";
+import { Trash2, Upload, Tag, Download } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
-import { matchEvidence, buildMappingsFromMatches } from "@/lib/matching";
-import { Link } from "react-router-dom";
+import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@/lib/auth";
+import { useActiveCompany } from "@/lib/active-company";
+import { ControlPicker } from "@/components/ControlPicker";
+import type { Tables } from "@/integrations/supabase/types";
+
+type EvidenceRow = Tables<"evidence">;
+type EvidenceWithTags = EvidenceRow & {
+  tags: Array<{ company_control_id: string; control_id: string; control_ref: string }>;
+};
+
+async function fetchEvidence(companyId: string): Promise<EvidenceWithTags[]> {
+  const { data, error } = await supabase
+    .from("evidence")
+    .select(
+      "*, evidence_controls(company_control_id, company_controls(control_id, control:controls(control_ref)))",
+    )
+    .eq("company_id", companyId)
+    .order("created_at", { ascending: false });
+  if (error) throw error;
+  return (data ?? []).map((row) => {
+    type RowWithTags = EvidenceRow & {
+      evidence_controls: Array<{
+        company_control_id: string;
+        company_controls: { control_id: string; control: { control_ref: string } | null } | null;
+      }>;
+    };
+    const r = row as RowWithTags;
+    const tags = (r.evidence_controls ?? []).flatMap((ec) => {
+      if (!ec.company_controls) return [];
+      return [
+        {
+          company_control_id: ec.company_control_id,
+          control_id: ec.company_controls.control_id,
+          control_ref: ec.company_controls.control?.control_ref ?? "?",
+        },
+      ];
+    });
+    return { ...row, tags };
+  });
+}
 
 export default function EvidencePage() {
-  const {
-    activeCompanyId,
-    companies,
-    evidence,
-    addEvidence,
-    deleteEvidence,
-    controls,
-    addMappings,
-    mappings,
-  } = useStore();
-  const company = companies.find((c) => c.id === activeCompanyId);
-  const myEvidence = evidence.filter((e) => e.company_id === activeCompanyId);
+  const { user } = useAuth();
+  const { activeCompany } = useActiveCompany();
+  const qc = useQueryClient();
 
-  const [form, setForm] = useState({
-    title: "",
-    file_name: "",
-    file_type: "",
-    description: "",
-    extracted_text: "",
-    notes: "",
+  const [form, setForm] = useState({ title: "", description: "", file: null as File | null });
+  const [pickerEvidence, setPickerEvidence] = useState<EvidenceWithTags | null>(null);
+
+  const evidenceQuery = useQuery({
+    queryKey: ["evidence", activeCompany?.id],
+    queryFn: () => fetchEvidence(activeCompany!.id),
+    enabled: !!activeCompany,
   });
 
-  if (!company) {
+  const uploadEvidence = useMutation({
+    mutationFn: async (input: { title: string; description: string; file: File | null }) => {
+      if (!activeCompany || !user) throw new Error("No active company");
+
+      // 1. Insert evidence row first to get its id (used in storage path).
+      const { data: ev, error: evErr } = await supabase
+        .from("evidence")
+        .insert({
+          company_id: activeCompany.id,
+          title: input.title.trim(),
+          description: input.description.trim() || null,
+          collected_by: user.id,
+          collected_at: new Date().toISOString(),
+        })
+        .select()
+        .single();
+      if (evErr) throw evErr;
+
+      // 2. If a file is present, upload it under {company_id}/{evidence_id}/.
+      if (input.file) {
+        const path = `${activeCompany.id}/${ev.id}/${input.file.name}`;
+        const { error: upErr } = await supabase.storage
+          .from("evidence")
+          .upload(path, input.file, { upsert: false });
+        if (upErr) {
+          // Roll back the evidence row so we don't leave orphaned metadata.
+          await supabase.from("evidence").delete().eq("id", ev.id);
+          throw upErr;
+        }
+        const { error: updErr } = await supabase
+          .from("evidence")
+          .update({
+            storage_path: path,
+            mime_type: input.file.type || null,
+            file_size: input.file.size,
+          })
+          .eq("id", ev.id);
+        if (updErr) throw updErr;
+      }
+
+      return ev;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["evidence", activeCompany?.id] });
+      qc.invalidateQueries({ queryKey: ["evidence-counts", activeCompany?.id] });
+      setForm({ title: "", description: "", file: null });
+      const fileInput = document.getElementById("evidence-file") as HTMLInputElement | null;
+      if (fileInput) fileInput.value = "";
+      toast({ title: "Evidence saved" });
+    },
+    onError: (e: Error) => {
+      toast({ title: "Upload failed", description: e.message, variant: "destructive" });
+    },
+  });
+
+  const deleteEvidence = useMutation({
+    mutationFn: async (ev: EvidenceWithTags) => {
+      // Best-effort storage cleanup before the metadata row is removed.
+      if (ev.storage_path) {
+        await supabase.storage.from("evidence").remove([ev.storage_path]);
+      }
+      const { error } = await supabase.from("evidence").delete().eq("id", ev.id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["evidence", activeCompany?.id] });
+      qc.invalidateQueries({ queryKey: ["evidence-counts", activeCompany?.id] });
+      toast({ title: "Evidence deleted" });
+    },
+    onError: (e: Error) => toast({ title: "Delete failed", description: e.message, variant: "destructive" }),
+  });
+
+  const setTags = useMutation({
+    mutationFn: async ({ evidence, controlIds }: { evidence: EvidenceWithTags; controlIds: string[] }) => {
+      if (!activeCompany) throw new Error("No active company");
+
+      // Reconcile current tags vs desired set.
+      const currentByControlId = new Map(evidence.tags.map((t) => [t.control_id, t.company_control_id]));
+      const desiredSet = new Set(controlIds);
+
+      // Remove tags no longer wanted.
+      const toRemove: string[] = [];
+      for (const [ctrlId, ccId] of currentByControlId) {
+        if (!desiredSet.has(ctrlId)) toRemove.push(ccId);
+      }
+      if (toRemove.length > 0) {
+        const { error } = await supabase
+          .from("evidence_controls")
+          .delete()
+          .eq("evidence_id", evidence.id)
+          .in("company_control_id", toRemove);
+        if (error) throw error;
+      }
+
+      // Add tags for newly selected controls. For each, ensure a
+      // company_controls row exists, then insert evidence_controls.
+      const toAdd = controlIds.filter((cid) => !currentByControlId.has(cid));
+      for (const controlId of toAdd) {
+        // Upsert company_controls (company_id, control_id).
+        const { data: cc, error: ccErr } = await supabase
+          .from("company_controls")
+          .upsert(
+            { company_id: activeCompany.id, control_id: controlId },
+            { onConflict: "company_id,control_id" },
+          )
+          .select("id")
+          .single();
+        if (ccErr) throw ccErr;
+        const { error: ecErr } = await supabase
+          .from("evidence_controls")
+          .insert({ evidence_id: evidence.id, company_control_id: cc.id, tagged_by: user?.id ?? null });
+        if (ecErr) throw ecErr;
+      }
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["evidence", activeCompany?.id] });
+      qc.invalidateQueries({ queryKey: ["evidence-counts", activeCompany?.id] });
+      toast({ title: "Tags updated" });
+    },
+    onError: (e: Error) => toast({ title: "Tag update failed", description: e.message, variant: "destructive" }),
+  });
+
+  async function handleDownload(ev: EvidenceWithTags) {
+    if (!ev.storage_path) return;
+    const { data, error } = await supabase.storage.from("evidence").createSignedUrl(ev.storage_path, 60);
+    if (error || !data) {
+      toast({ title: "Could not generate link", description: error?.message, variant: "destructive" });
+      return;
+    }
+    window.open(data.signedUrl, "_blank", "noopener");
+  }
+
+  if (!activeCompany) {
     return (
       <Layout>
         <PageHeader title="Evidence" />
         <Card>
           <CardContent className="py-10 text-center text-sm text-muted-foreground">
-            Select an active company first. <Link to="/companies" className="text-primary underline">Manage companies</Link>
+            Select an active company first.{" "}
+            <Link to="/companies" className="text-primary underline">
+              Manage companies
+            </Link>
           </CardContent>
         </Card>
       </Layout>
     );
   }
 
-  function onFile(f: File | null) {
-    if (!f) return;
-    setForm((p) => ({
-      ...p,
-      file_name: f.name,
-      file_type: f.type || f.name.split(".").pop() || "",
-      title: p.title || f.name.replace(/\.[^.]+$/, ""),
-    }));
-    if (f.type.startsWith("text/") || /\.(txt|md|csv|json|log)$/i.test(f.name)) {
-      const reader = new FileReader();
-      reader.onload = () => setForm((p) => ({ ...p, extracted_text: String(reader.result || "") }));
-      reader.readAsText(f);
-    }
-  }
-
-  function submit(autoSuggest: boolean) {
-    if (!form.title.trim()) {
-      toast({ title: "Title required" });
-      return;
-    }
-    const ev = addEvidence({ ...form, company_id: company!.id });
-    if (autoSuggest) {
-      const matches = matchEvidence(ev, controls);
-      if (matches.length === 0) {
-        toast({ title: "Evidence saved", description: "No keyword matches found — add manual mapping in Review." });
-      } else {
-        const ms = buildMappingsFromMatches(ev.id, company!.id, matches);
-        addMappings(ms);
-        toast({ title: "Evidence saved", description: `${ms.length} suggested controls. Review them next.` });
-      }
-    } else {
-      toast({ title: "Evidence saved" });
-    }
-    setForm({ title: "", file_name: "", file_type: "", description: "", extracted_text: "", notes: "" });
-  }
+  const evidence = evidenceQuery.data ?? [];
 
   return (
     <Layout>
-      <PageHeader title="Evidence" description={`Workspace: ${company.name}`} />
+      <PageHeader title="Evidence" description={`Workspace: ${activeCompany.name}`} />
 
-      <div className="grid lg:grid-cols-2 gap-6">
+      <div className="grid lg:grid-cols-[1fr_2fr] gap-6">
         <Card>
           <CardContent className="p-5 space-y-3">
             <h3 className="font-medium text-sm">Add Evidence</h3>
             <div>
-              <Label>File (optional)</Label>
-              <Input type="file" onChange={(e) => onFile(e.target.files?.[0] || null)} />
+              <Label htmlFor="evidence-file">File (optional)</Label>
+              <Input
+                id="evidence-file"
+                type="file"
+                onChange={(e) => {
+                  const f = e.target.files?.[0] ?? null;
+                  setForm((p) => ({
+                    ...p,
+                    file: f,
+                    title: p.title || (f ? f.name.replace(/\.[^.]+$/, "") : ""),
+                  }));
+                }}
+              />
             </div>
             <div>
               <Label>Title</Label>
               <Input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} />
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <Label>File Name</Label>
-                <Input value={form.file_name} onChange={(e) => setForm({ ...form, file_name: e.target.value })} />
-              </div>
-              <div>
-                <Label>File Type</Label>
-                <Input value={form.file_type} onChange={(e) => setForm({ ...form, file_type: e.target.value })} />
-              </div>
             </div>
             <div>
               <Label>Description</Label>
@@ -119,82 +253,121 @@ export default function EvidencePage() {
                 placeholder="What does this evidence show?"
               />
             </div>
-            <div>
-              <Label>Extracted / Pasted Text</Label>
-              <Textarea
-                rows={6}
-                value={form.extracted_text}
-                onChange={(e) => setForm({ ...form, extracted_text: e.target.value })}
-                placeholder="Paste text content here for keyword matching."
-              />
-            </div>
-            <div>
-              <Label>Notes</Label>
-              <Textarea value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} />
-            </div>
-            <div className="flex gap-2 pt-1">
-              <Button onClick={() => submit(true)}>
-                <Sparkles className="h-4 w-4" /> Save & Suggest Controls
-              </Button>
-              <Button variant="outline" onClick={() => submit(false)}>
-                <Upload className="h-4 w-4" /> Save Only
-              </Button>
-            </div>
+            <Button
+              className="w-full"
+              onClick={() => {
+                if (!form.title.trim()) {
+                  toast({ title: "Title required" });
+                  return;
+                }
+                uploadEvidence.mutate(form);
+              }}
+              disabled={uploadEvidence.isPending}
+            >
+              <Upload className="h-4 w-4" /> {uploadEvidence.isPending ? "Saving…" : "Save evidence"}
+            </Button>
           </CardContent>
         </Card>
 
         <Card>
           <CardContent className="p-0">
-            <div className="px-5 py-3 border-b text-sm font-medium">
-              Evidence ({myEvidence.length})
-            </div>
+            <div className="px-5 py-3 border-b text-sm font-medium">Evidence ({evidence.length})</div>
             <Table>
               <TableHeader>
                 <TableRow>
                   <TableHead>Title</TableHead>
                   <TableHead>File</TableHead>
-                  <TableHead>Mappings</TableHead>
-                  <TableHead>Uploaded</TableHead>
-                  <TableHead></TableHead>
+                  <TableHead>Tags</TableHead>
+                  <TableHead>Added</TableHead>
+                  <TableHead className="w-32"></TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {myEvidence.length === 0 && (
+                {evidenceQuery.isLoading ? (
+                  <TableRow>
+                    <TableCell colSpan={5} className="text-center text-sm text-muted-foreground py-8">
+                      Loading…
+                    </TableCell>
+                  </TableRow>
+                ) : evidence.length === 0 ? (
                   <TableRow>
                     <TableCell colSpan={5} className="text-center text-sm text-muted-foreground py-8">
                       No evidence yet.
                     </TableCell>
                   </TableRow>
-                )}
-                {myEvidence.map((e) => {
-                  const count = mappings.filter((m) => m.evidence_id === e.id).length;
-                  return (
-                    <TableRow key={e.id}>
-                      <TableCell className="font-medium">{e.title}</TableCell>
-                      <TableCell className="text-xs text-muted-foreground">{e.file_name || "—"}</TableCell>
-                      <TableCell>{count}</TableCell>
-                      <TableCell className="text-xs text-muted-foreground">
-                        {new Date(e.uploaded_at).toLocaleDateString()}
+                ) : (
+                  evidence.map((ev) => (
+                    <TableRow key={ev.id}>
+                      <TableCell className="font-medium align-top">
+                        <div>{ev.title}</div>
+                        {ev.description && (
+                          <div className="text-xs text-muted-foreground line-clamp-2 max-w-md">{ev.description}</div>
+                        )}
                       </TableCell>
-                      <TableCell>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => {
-                            if (confirm(`Delete evidence "${e.title}"?`)) deleteEvidence(e.id);
-                          }}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
+                      <TableCell className="text-xs text-muted-foreground align-top">
+                        {ev.storage_path ? (
+                          <button className="hover:text-foreground inline-flex items-center gap-1" onClick={() => handleDownload(ev)}>
+                            <Download className="h-3 w-3" />
+                            {ev.storage_path.split("/").pop()}
+                          </button>
+                        ) : (
+                          "—"
+                        )}
+                      </TableCell>
+                      <TableCell className="align-top">
+                        <div className="flex flex-wrap gap-1 max-w-xs">
+                          {ev.tags.length === 0 ? (
+                            <span className="text-xs text-muted-foreground">untagged</span>
+                          ) : (
+                            ev.tags.map((t) => (
+                              <Badge key={t.company_control_id} variant="secondary" className="font-mono text-[10px]">
+                                {t.control_ref}
+                              </Badge>
+                            ))
+                          )}
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-xs text-muted-foreground align-top">
+                        {new Date(ev.created_at).toLocaleDateString()}
+                      </TableCell>
+                      <TableCell className="align-top">
+                        <div className="flex gap-1">
+                          <Button size="sm" variant="ghost" onClick={() => setPickerEvidence(ev)} title="Tag controls">
+                            <Tag className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => {
+                              if (confirm(`Delete "${ev.title}"?`)) deleteEvidence.mutate(ev);
+                            }}
+                            title="Delete"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
                       </TableCell>
                     </TableRow>
-                  );
-                })}
+                  ))
+                )}
               </TableBody>
             </Table>
           </CardContent>
         </Card>
       </div>
+
+      <ControlPicker
+        open={!!pickerEvidence}
+        onOpenChange={(o) => {
+          if (!o) setPickerEvidence(null);
+        }}
+        selectedControlIds={new Set(pickerEvidence?.tags.map((t) => t.control_id) ?? [])}
+        onConfirm={async (controlIds) => {
+          if (pickerEvidence) {
+            await setTags.mutateAsync({ evidence: pickerEvidence, controlIds });
+          }
+        }}
+      />
     </Layout>
   );
 }
