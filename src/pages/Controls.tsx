@@ -17,6 +17,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { ChevronRight, ChevronDown } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useActiveCompany } from "@/lib/active-company";
+import { ControlSheet } from "@/components/ControlSheet";
 import type { Tables } from "@/integrations/supabase/types";
 
 type ControlRow = Tables<"controls">;
@@ -85,6 +86,7 @@ export default function Controls() {
   const [type, setType] = useState("all");
   const [evState, setEvState] = useState("all");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [sheetControl, setSheetControl] = useState<ControlRow | null>(null);
 
   const controlsQuery = useQuery({ queryKey: ["sf-controls"], queryFn: fetchSecureframeControls });
   const controls = controlsQuery.data ?? [];
@@ -285,8 +287,8 @@ export default function Controls() {
                   const isOpen = expanded.has(p.id);
                   return (
                     <Fragment key={p.id}>
-                      <TableRow className="font-medium">
-                        <TableCell>
+                      <TableRow className="font-medium cursor-pointer hover:bg-muted/40" onClick={() => setSheetControl(p)}>
+                        <TableCell onClick={(e) => e.stopPropagation()}>
                           {kids.length > 0 && (
                             <button onClick={() => toggle(p.id)} className="p-0.5">
                               {isOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
@@ -301,7 +303,7 @@ export default function Controls() {
                       </TableRow>
                       {isOpen &&
                         kids.map((k) => (
-                          <TableRow key={k.id} className="bg-muted/30">
+                          <TableRow key={k.id} className="bg-muted/30 cursor-pointer hover:bg-muted/60" onClick={() => setSheetControl(k)}>
                             <TableCell></TableCell>
                             <TableCell className="font-mono text-xs pl-6 text-muted-foreground">{k.control_ref}</TableCell>
                             <TableCell className="text-xs text-muted-foreground">{k.domain}</TableCell>
@@ -314,7 +316,7 @@ export default function Controls() {
                   );
                 })}
                 {orphans.map((c) => (
-                  <TableRow key={c.id}>
+                  <TableRow key={c.id} className="cursor-pointer hover:bg-muted/40" onClick={() => setSheetControl(c)}>
                     <TableCell></TableCell>
                     <TableCell className="font-mono text-xs">{c.control_ref}</TableCell>
                     <TableCell>{c.domain}</TableCell>
@@ -329,6 +331,12 @@ export default function Controls() {
         </Table>
       </Card>
 
+      <ControlSheet
+        open={!!sheetControl}
+        onOpenChange={(o) => { if (!o) setSheetControl(null); }}
+        control={sheetControl}
+        companyId={activeCompany?.id ?? null}
+      />
     </Layout>
   );
 }
