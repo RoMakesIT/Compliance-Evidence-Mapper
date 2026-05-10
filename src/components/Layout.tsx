@@ -1,7 +1,7 @@
 import { ReactNode } from "react";
 import { NavLink } from "react-router-dom";
 import { cn } from "@/lib/utils";
-import { useStore } from "@/lib/store";
+import { useActiveCompany } from "@/lib/active-company";
 import { useAuth } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import {
@@ -35,7 +35,7 @@ const nav = [
 ];
 
 export default function Layout({ children }: { children: ReactNode }) {
-  const { companies, activeCompanyId, setActiveCompanyId } = useStore();
+  const { companies, activeCompany, setActiveCompanyId } = useActiveCompany();
   const { user, signOut } = useAuth();
   return (
     <div className="flex min-h-screen bg-background text-foreground">
@@ -71,7 +71,7 @@ export default function Layout({ children }: { children: ReactNode }) {
           <div>
             <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1.5">Active Company</div>
             <Select
-              value={activeCompanyId ?? ""}
+              value={activeCompany?.id ?? ""}
               onValueChange={(v) => setActiveCompanyId(v || null)}
             >
               <SelectTrigger className="h-8 text-xs">

@@ -5,6 +5,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { StoreProvider } from "@/lib/store";
 import { AuthProvider } from "@/lib/auth";
+import { ActiveCompanyProvider } from "@/lib/active-company";
 import { RequireAuth } from "@/components/RequireAuth";
 import Dashboard from "./pages/Dashboard";
 import Companies from "./pages/Companies";
@@ -24,8 +25,9 @@ const protectedRoute = (element: React.ReactNode) => <RequireAuth>{element}</Req
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <AuthProvider>
-      <StoreProvider>
-        <TooltipProvider>
+      <ActiveCompanyProvider>
+        <StoreProvider>
+          <TooltipProvider>
           <Toaster />
           <Sonner />
           <BrowserRouter>
@@ -42,8 +44,9 @@ const App = () => (
               <Route path="*" element={<NotFound />} />
             </Routes>
           </BrowserRouter>
-        </TooltipProvider>
-      </StoreProvider>
+          </TooltipProvider>
+        </StoreProvider>
+      </ActiveCompanyProvider>
     </AuthProvider>
   </QueryClientProvider>
 );

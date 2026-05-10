@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import Layout from "@/components/Layout";
 import { PageHeader } from "@/components/PageHeader";
 import { Button } from "@/components/ui/button";
@@ -20,46 +20,25 @@ import { Badge } from "@/components/ui/badge";
 import { toast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth";
-import type { Tables, Enums } from "@/integrations/supabase/types";
-
-type CompanyRow = Tables<"companies"> & { role: Enums<"company_role"> };
-
-async function fetchCompanies(userId: string): Promise<CompanyRow[]> {
-  // Pull every company the current user is a member of, plus their role.
-  const { data, error } = await supabase
-    .from("company_members")
-    .select("role, company:companies(*)")
-    .eq("user_id", userId)
-    .order("created_at", { ascending: true });
-  if (error) throw error;
-  const rows: CompanyRow[] = [];
-  for (const row of data ?? []) {
-    if (row.company) rows.push({ ...row.company, role: row.role });
-  }
-  return rows;
-}
+import { useActiveCompany } from "@/lib/active-company";
 
 export default function Companies() {
   const { user } = useAuth();
+  const { companies, loading, setActiveCompanyId } = useActiveCompany();
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState({ name: "", industry: "", notes: "" });
 
-  const companiesQuery = useQuery({
-    queryKey: ["companies", user?.id],
-    queryFn: () => fetchCompanies(user!.id),
-    enabled: !!user,
-  });
-
   const createCompany = useMutation({
     mutationFn: async (input: { name: string; industry: string; notes: string }) => {
       if (!user) throw new Error("Not authenticated");
-      const slug = input.name
-        .toLowerCase()
-        .trim()
-        .replace(/[^a-z0-9]+/g, "-")
-        .replace(/^-+|-+$/g, "")
-        .slice(0, 60) || null;
+      const slug =
+        input.name
+          .toLowerCase()
+          .trim()
+          .replace(/[^a-z0-9]+/g, "-")
+          .replace(/^-+|-+$/g, "")
+          .slice(0, 60) || null;
       const { data, error } = await supabase.rpc("create_company", {
         p_name: input.name.trim(),
         p_slug: slug,
@@ -71,6 +50,7 @@ export default function Companies() {
     },
     onSuccess: (c) => {
       qc.invalidateQueries({ queryKey: ["companies"] });
+      setActiveCompanyId(c.id);
       toast({ title: "Company created", description: c.name });
       setForm({ name: "", industry: "", notes: "" });
       setOpen(false);
@@ -79,8 +59,6 @@ export default function Companies() {
       toast({ title: "Could not create company", description: e.message, variant: "destructive" });
     },
   });
-
-  const companies = companiesQuery.data ?? [];
 
   return (
     <Layout>
@@ -126,15 +104,9 @@ export default function Companies() {
         }
       />
 
-      {companiesQuery.isLoading ? (
+      {loading ? (
         <Card>
           <CardContent className="py-12 text-center text-sm text-muted-foreground">Loading companies…</CardContent>
-        </Card>
-      ) : companiesQuery.isError ? (
-        <Card>
-          <CardContent className="py-12 text-center text-sm text-destructive">
-            Failed to load: {(companiesQuery.error as Error).message}
-          </CardContent>
         </Card>
       ) : companies.length === 0 ? (
         <Card>
@@ -155,7 +127,11 @@ export default function Companies() {
             </TableHeader>
             <TableBody>
               {companies.map((c) => (
-                <TableRow key={c.id}>
+                <TableRow
+                  key={c.id}
+                  className="cursor-pointer hover:bg-muted/40"
+                  onClick={() => setActiveCompanyId(c.id)}
+                >
                   <TableCell className="font-medium">{c.name}</TableCell>
                   <TableCell className="text-muted-foreground">{c.industry || "—"}</TableCell>
                   <TableCell>
