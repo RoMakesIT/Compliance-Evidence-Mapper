@@ -4,6 +4,8 @@ import { Toaster as Sonner } from "@/components/ui/sonner";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { StoreProvider } from "@/lib/store";
+import { AuthProvider } from "@/lib/auth";
+import { RequireAuth } from "@/components/RequireAuth";
 import Dashboard from "./pages/Dashboard";
 import Companies from "./pages/Companies";
 import Controls from "./pages/Controls";
@@ -12,31 +14,37 @@ import Review from "./pages/Review";
 import Recommendations from "./pages/Recommendations";
 import Crosswalk from "./pages/Crosswalk";
 import Settings from "./pages/Settings";
+import SignIn from "./pages/SignIn";
 import NotFound from "./pages/NotFound.tsx";
 
 const queryClient = new QueryClient();
 
+const protectedRoute = (element: React.ReactNode) => <RequireAuth>{element}</RequireAuth>;
+
 const App = () => (
   <QueryClientProvider client={queryClient}>
-    <StoreProvider>
-      <TooltipProvider>
-        <Toaster />
-        <Sonner />
-        <BrowserRouter>
-          <Routes>
-            <Route path="/" element={<Dashboard />} />
-            <Route path="/companies" element={<Companies />} />
-            <Route path="/controls" element={<Controls />} />
-            <Route path="/evidence" element={<EvidencePage />} />
-            <Route path="/review" element={<Review />} />
-            <Route path="/recommendations" element={<Recommendations />} />
-            <Route path="/crosswalk" element={<Crosswalk />} />
-            <Route path="/settings" element={<Settings />} />
-            <Route path="*" element={<NotFound />} />
-          </Routes>
-        </BrowserRouter>
-      </TooltipProvider>
-    </StoreProvider>
+    <AuthProvider>
+      <StoreProvider>
+        <TooltipProvider>
+          <Toaster />
+          <Sonner />
+          <BrowserRouter>
+            <Routes>
+              <Route path="/signin" element={<SignIn />} />
+              <Route path="/" element={protectedRoute(<Dashboard />)} />
+              <Route path="/companies" element={protectedRoute(<Companies />)} />
+              <Route path="/controls" element={protectedRoute(<Controls />)} />
+              <Route path="/evidence" element={protectedRoute(<EvidencePage />)} />
+              <Route path="/review" element={protectedRoute(<Review />)} />
+              <Route path="/recommendations" element={protectedRoute(<Recommendations />)} />
+              <Route path="/crosswalk" element={protectedRoute(<Crosswalk />)} />
+              <Route path="/settings" element={protectedRoute(<Settings />)} />
+              <Route path="*" element={<NotFound />} />
+            </Routes>
+          </BrowserRouter>
+        </TooltipProvider>
+      </StoreProvider>
+    </AuthProvider>
   </QueryClientProvider>
 );
 

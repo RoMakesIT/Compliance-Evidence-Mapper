@@ -2,6 +2,8 @@ import { ReactNode } from "react";
 import { NavLink } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import { useStore } from "@/lib/store";
+import { useAuth } from "@/lib/auth";
+import { Button } from "@/components/ui/button";
 import {
   LayoutDashboard,
   Building2,
@@ -11,6 +13,7 @@ import {
   Lightbulb,
   GitCompare,
   Settings,
+  LogOut,
 } from "lucide-react";
 import {
   Select,
@@ -33,6 +36,7 @@ const nav = [
 
 export default function Layout({ children }: { children: ReactNode }) {
   const { companies, activeCompanyId, setActiveCompanyId } = useStore();
+  const { user, signOut } = useAuth();
   return (
     <div className="flex min-h-screen bg-background text-foreground">
       <aside className="w-60 border-r bg-sidebar text-sidebar-foreground flex flex-col">
@@ -63,26 +67,38 @@ export default function Layout({ children }: { children: ReactNode }) {
             );
           })}
         </nav>
-        <div className="p-3 border-t">
-          <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1.5">Active Company</div>
-          <Select
-            value={activeCompanyId ?? ""}
-            onValueChange={(v) => setActiveCompanyId(v || null)}
-          >
-            <SelectTrigger className="h-8 text-xs">
-              <SelectValue placeholder="Select company" />
-            </SelectTrigger>
-            <SelectContent>
-              {companies.length === 0 && (
-                <div className="px-2 py-1.5 text-xs text-muted-foreground">No companies yet</div>
-              )}
-              {companies.map((c) => (
-                <SelectItem key={c.id} value={c.id}>
-                  {c.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+        <div className="p-3 border-t space-y-3">
+          <div>
+            <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1.5">Active Company</div>
+            <Select
+              value={activeCompanyId ?? ""}
+              onValueChange={(v) => setActiveCompanyId(v || null)}
+            >
+              <SelectTrigger className="h-8 text-xs">
+                <SelectValue placeholder="Select company" />
+              </SelectTrigger>
+              <SelectContent>
+                {companies.length === 0 && (
+                  <div className="px-2 py-1.5 text-xs text-muted-foreground">No companies yet</div>
+                )}
+                {companies.map((c) => (
+                  <SelectItem key={c.id} value={c.id}>
+                    {c.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          {user && (
+            <div className="flex items-center justify-between text-xs">
+              <span className="truncate text-muted-foreground" title={user.email ?? ""}>
+                {user.email}
+              </span>
+              <Button variant="ghost" size="sm" className="h-7 px-2" onClick={() => void signOut()}>
+                <LogOut className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+          )}
         </div>
       </aside>
       <main className="flex-1 min-w-0">
