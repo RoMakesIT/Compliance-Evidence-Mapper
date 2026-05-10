@@ -17,7 +17,15 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Trash2, Upload, Tag, Download, Pencil } from "lucide-react";
+import { SOURCE_SYSTEMS } from "@/lib/source-systems";
 import { toast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth";
@@ -66,10 +74,15 @@ export default function EvidencePage() {
   const { activeCompany } = useActiveCompany();
   const qc = useQueryClient();
 
-  const [form, setForm] = useState({ title: "", description: "", file: null as File | null });
+  const [form, setForm] = useState({
+    title: "",
+    description: "",
+    source_system: "" as string,
+    file: null as File | null,
+  });
   const [pickerEvidence, setPickerEvidence] = useState<EvidenceWithTags | null>(null);
   const [editingEvidence, setEditingEvidence] = useState<EvidenceWithTags | null>(null);
-  const [editForm, setEditForm] = useState({ title: "", description: "" });
+  const [editForm, setEditForm] = useState({ title: "", description: "", source_system: "" });
 
   const evidenceQuery = useQuery({
     queryKey: ["evidence", activeCompany?.id],
@@ -78,7 +91,12 @@ export default function EvidencePage() {
   });
 
   const uploadEvidence = useMutation({
-    mutationFn: async (input: { title: string; description: string; file: File | null }) => {
+    mutationFn: async (input: {
+      title: string;
+      description: string;
+      source_system: string;
+      file: File | null;
+    }) => {
       if (!activeCompany || !user) throw new Error("No active company");
 
       // 1. Insert evidence row first to get its id (used in storage path).
@@ -88,6 +106,7 @@ export default function EvidencePage() {
           company_id: activeCompany.id,
           title: input.title.trim(),
           description: input.description.trim() || null,
+          source_system: input.source_system || null,
           collected_by: user.id,
           collected_at: new Date().toISOString(),
         })
@@ -122,7 +141,7 @@ export default function EvidencePage() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["evidence", activeCompany?.id] });
       qc.invalidateQueries({ queryKey: ["evidence-counts", activeCompany?.id] });
-      setForm({ title: "", description: "", file: null });
+      setForm({ title: "", description: "", source_system: "", file: null });
       const fileInput = document.getElementById("evidence-file") as HTMLInputElement | null;
       if (fileInput) fileInput.value = "";
       toast({ title: "Evidence saved" });
@@ -133,12 +152,18 @@ export default function EvidencePage() {
   });
 
   const updateEvidence = useMutation({
-    mutationFn: async (input: { id: string; title: string; description: string }) => {
+    mutationFn: async (input: {
+      id: string;
+      title: string;
+      description: string;
+      source_system: string;
+    }) => {
       const { error } = await supabase
         .from("evidence")
         .update({
           title: input.title.trim(),
           description: input.description.trim() || null,
+          source_system: input.source_system || null,
         })
         .eq("id", input.id);
       if (error) throw error;
@@ -284,6 +309,23 @@ export default function EvidencePage() {
                 placeholder="What does this evidence show?"
               />
             </div>
+            <div>
+              <Label>Source system</Label>
+              <Select
+                value={form.source_system || "_none"}
+                onValueChange={(v) => setForm({ ...form, source_system: v === "_none" ? "" : v })}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Where did this come from?" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="_none">— unset —</SelectItem>
+                  {SOURCE_SYSTEMS.map((s) => (
+                    <SelectItem key={s} value={s}>{s}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
             <Button
               className="w-full"
               onClick={() => {
@@ -307,6 +349,7 @@ export default function EvidencePage() {
               <TableHeader>
                 <TableRow>
                   <TableHead>Title</TableHead>
+                  <TableHead className="w-28">Source</TableHead>
                   <TableHead>File</TableHead>
                   <TableHead>Tags</TableHead>
                   <TableHead>Added</TableHead>
@@ -316,13 +359,13 @@ export default function EvidencePage() {
               <TableBody>
                 {evidenceQuery.isLoading ? (
                   <TableRow>
-                    <TableCell colSpan={5} className="text-center text-sm text-muted-foreground py-8">
+                    <TableCell colSpan={6} className="text-center text-sm text-muted-foreground py-8">
                       Loading…
                     </TableCell>
                   </TableRow>
                 ) : evidence.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={5} className="text-center text-sm text-muted-foreground py-8">
+                    <TableCell colSpan={6} className="text-center text-sm text-muted-foreground py-8">
                       No evidence yet.
                     </TableCell>
                   </TableRow>
@@ -333,6 +376,13 @@ export default function EvidencePage() {
                         <div>{ev.title}</div>
                         {ev.description && (
                           <div className="text-xs text-muted-foreground line-clamp-2 max-w-md">{ev.description}</div>
+                        )}
+                      </TableCell>
+                      <TableCell className="align-top">
+                        {ev.source_system ? (
+                          <Badge variant="outline" className="text-[10px]">{ev.source_system}</Badge>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">—</span>
                         )}
                       </TableCell>
                       <TableCell className="text-xs text-muted-foreground align-top">
@@ -371,7 +421,11 @@ export default function EvidencePage() {
                             variant="ghost"
                             onClick={() => {
                               setEditingEvidence(ev);
-                              setEditForm({ title: ev.title, description: ev.description ?? "" });
+                              setEditForm({
+                                title: ev.title,
+                                description: ev.description ?? "",
+                                source_system: ev.source_system ?? "",
+                              });
                             }}
                             title="Edit"
                           >
@@ -425,6 +479,25 @@ export default function EvidencePage() {
                 placeholder="What does this evidence show? Keywords here are used for tag suggestions."
               />
             </div>
+            <div>
+              <Label>Source system</Label>
+              <Select
+                value={editForm.source_system || "_none"}
+                onValueChange={(v) =>
+                  setEditForm((p) => ({ ...p, source_system: v === "_none" ? "" : v }))
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Where did this come from?" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="_none">— unset —</SelectItem>
+                  {SOURCE_SYSTEMS.map((s) => (
+                    <SelectItem key={s} value={s}>{s}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
             <p className="text-xs text-muted-foreground">
               The title and description feed into the keyword scorer that powers the
               "Suggested" controls in the tag picker — adding domain words here makes
@@ -443,6 +516,7 @@ export default function EvidencePage() {
                   id: editingEvidence.id,
                   title: editForm.title,
                   description: editForm.description,
+                  source_system: editForm.source_system,
                 });
               }}
               disabled={updateEvidence.isPending || !editForm.title.trim()}
@@ -466,6 +540,7 @@ export default function EvidencePage() {
                 .join(" ")
             : ""
         }
+        evidenceSource={pickerEvidence?.source_system ?? null}
         onConfirm={async (controlIds) => {
           if (pickerEvidence) {
             await setTags.mutateAsync({ evidence: pickerEvidence, controlIds });

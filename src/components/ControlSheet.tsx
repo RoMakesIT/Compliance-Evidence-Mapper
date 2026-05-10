@@ -137,6 +137,16 @@ export function ControlSheet({ open, onOpenChange, control, companyId }: Props) 
               </Section>
             )}
 
+            {control?.source_hints && control.source_hints.length > 0 && (
+              <Section title="Likely sources">
+                <div className="flex flex-wrap gap-1">
+                  {control.source_hints.map((h) => (
+                    <Badge key={h} className="text-[10px]">{h}</Badge>
+                  ))}
+                </div>
+              </Section>
+            )}
+
             {control?.evidence_keywords && (
               <Section title="Keywords">
                 <div className="flex flex-wrap gap-1">

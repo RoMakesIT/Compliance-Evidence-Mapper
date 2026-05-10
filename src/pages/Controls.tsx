@@ -18,6 +18,7 @@ import { ChevronRight, ChevronDown } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useActiveCompany } from "@/lib/active-company";
 import { ControlSheet } from "@/components/ControlSheet";
+import { SourceFilterChips } from "@/components/SourceFilterChips";
 import type { Tables } from "@/integrations/supabase/types";
 
 type ControlRow = Tables<"controls">;
@@ -87,6 +88,7 @@ export default function Controls() {
   const [evState, setEvState] = useState("all");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [sheetControl, setSheetControl] = useState<ControlRow | null>(null);
+  const [selectedSources, setSelectedSources] = useState<Set<string>>(new Set());
 
   const controlsQuery = useQuery({ queryKey: ["sf-controls"], queryFn: fetchSecureframeControls });
   const controls = controlsQuery.data ?? [];
@@ -144,13 +146,17 @@ export default function Controls() {
       const has = (evidenceCountByControlId.get(c.id) || 0) > 0;
       if (evState === "has" && !has) return false;
       if (evState === "missing" && has) return false;
+      if (selectedSources.size > 0) {
+        const hits = c.source_hints ?? [];
+        if (!hits.some((h) => selectedSources.has(h))) return false;
+      }
       if (q) {
         const blob = `${c.control_ref} ${c.description ?? ""} ${c.domain ?? ""}`.toLowerCase();
         if (!blob.includes(q)) return false;
       }
       return true;
     });
-  }, [controls, search, domain, type, evState, evidenceCountByControlId]);
+  }, [controls, search, domain, type, evState, evidenceCountByControlId, selectedSources]);
 
   const parents = filtered.filter((c) => !c.parent_control_id);
   const visibleParentIds = new Set(parents.map((p) => p.id));
@@ -163,6 +169,19 @@ export default function Controls() {
       else n.add(id);
       return n;
     });
+  }
+
+  function sourceBadges(hints: string[] | null | undefined) {
+    if (!hints || hints.length === 0) return <span className="text-muted-foreground text-xs">—</span>;
+    return (
+      <div className="flex flex-wrap gap-1">
+        {hints.map((h) => (
+          <Badge key={h} variant="outline" className="text-[10px]">
+            {h}
+          </Badge>
+        ))}
+      </div>
+    );
   }
 
   function statusBadge(controlId: string) {
@@ -218,40 +237,54 @@ export default function Controls() {
       )}
 
       <Card className="mb-4">
-        <CardContent className="p-3 flex flex-wrap gap-2">
-          <Input
-            placeholder="Search code, description…"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="max-w-xs"
+        <CardContent className="p-3 space-y-2">
+          <div className="flex flex-wrap gap-2">
+            <Input
+              placeholder="Search code, description…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="max-w-xs"
+            />
+            <Select value={domain} onValueChange={setDomain}>
+              <SelectTrigger className="w-44"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All domains</SelectItem>
+                {domains.map((d) => (
+                  <SelectItem key={d} value={d}>
+                    {d}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select value={type} onValueChange={setType}>
+              <SelectTrigger className="w-36"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All types</SelectItem>
+                <SelectItem value="parent">Parent only</SelectItem>
+                <SelectItem value="child">Child only</SelectItem>
+              </SelectContent>
+            </Select>
+            <Select value={evState} onValueChange={setEvState}>
+              <SelectTrigger className="w-44"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All evidence states</SelectItem>
+                <SelectItem value="has">Has evidence</SelectItem>
+                <SelectItem value="missing">Missing evidence</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <SourceFilterChips
+            selected={selectedSources}
+            onToggle={(v) => {
+              setSelectedSources((prev) => {
+                const next = new Set(prev);
+                if (next.has(v)) next.delete(v);
+                else next.add(v);
+                return next;
+              });
+            }}
+            onClear={() => setSelectedSources(new Set())}
           />
-          <Select value={domain} onValueChange={setDomain}>
-            <SelectTrigger className="w-44"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All domains</SelectItem>
-              {domains.map((d) => (
-                <SelectItem key={d} value={d}>
-                  {d}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Select value={type} onValueChange={setType}>
-            <SelectTrigger className="w-36"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All types</SelectItem>
-              <SelectItem value="parent">Parent only</SelectItem>
-              <SelectItem value="child">Child only</SelectItem>
-            </SelectContent>
-          </Select>
-          <Select value={evState} onValueChange={setEvState}>
-            <SelectTrigger className="w-44"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All evidence states</SelectItem>
-              <SelectItem value="has">Has evidence</SelectItem>
-              <SelectItem value="missing">Missing evidence</SelectItem>
-            </SelectContent>
-          </Select>
         </CardContent>
       </Card>
 
@@ -264,19 +297,20 @@ export default function Controls() {
               <TableHead className="w-40">Domain</TableHead>
               <TableHead>Description</TableHead>
               <TableHead className="w-40">SOC 2</TableHead>
+              <TableHead className="w-44">Source</TableHead>
               <TableHead className="w-32">Evidence</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {controlsQuery.isLoading ? (
               <TableRow>
-                <TableCell colSpan={6} className="py-10 text-center text-sm text-muted-foreground">
+                <TableCell colSpan={7} className="py-10 text-center text-sm text-muted-foreground">
                   Loading…
                 </TableCell>
               </TableRow>
             ) : controlsQuery.isError ? (
               <TableRow>
-                <TableCell colSpan={6} className="py-10 text-center text-sm text-destructive">
+                <TableCell colSpan={7} className="py-10 text-center text-sm text-destructive">
                   {(controlsQuery.error as Error).message}
                 </TableCell>
               </TableRow>
@@ -299,6 +333,7 @@ export default function Controls() {
                         <TableCell>{p.domain}</TableCell>
                         <TableCell className="text-sm">{p.description}</TableCell>
                         <TableCell>{crosswalkBadges(p.id)}</TableCell>
+                        <TableCell>{sourceBadges(p.source_hints)}</TableCell>
                         <TableCell>{statusBadge(p.id)}</TableCell>
                       </TableRow>
                       {isOpen &&
@@ -309,6 +344,7 @@ export default function Controls() {
                             <TableCell className="text-xs text-muted-foreground">{k.domain}</TableCell>
                             <TableCell className="text-sm">{k.description}</TableCell>
                             <TableCell>{crosswalkBadges(k.id)}</TableCell>
+                            <TableCell>{sourceBadges(k.source_hints)}</TableCell>
                             <TableCell>{statusBadge(k.id)}</TableCell>
                           </TableRow>
                         ))}
@@ -322,6 +358,7 @@ export default function Controls() {
                     <TableCell>{c.domain}</TableCell>
                     <TableCell className="text-sm">{c.description}</TableCell>
                     <TableCell>{crosswalkBadges(c.id)}</TableCell>
+                    <TableCell>{sourceBadges(c.source_hints)}</TableCell>
                     <TableCell>{statusBadge(c.id)}</TableCell>
                   </TableRow>
                 ))}

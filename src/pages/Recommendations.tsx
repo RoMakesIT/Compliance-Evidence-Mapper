@@ -21,10 +21,16 @@ import { toast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { useActiveCompany } from "@/lib/active-company";
 import { downloadCSV } from "@/lib/csv";
+import { SourceFilterChips } from "@/components/SourceFilterChips";
 import type { Tables, Enums } from "@/integrations/supabase/types";
 
 type RecRow = Tables<"recommendations"> & {
-  control: { control_ref: string; description: string | null; domain: string | null } | null;
+  control: {
+    control_ref: string;
+    description: string | null;
+    domain: string | null;
+    source_hints: string[] | null;
+  } | null;
 };
 
 const SEVERITIES: Enums<"recommendation_severity">[] = ["low", "med", "high", "critical"];
@@ -33,7 +39,7 @@ const STATUSES: Enums<"recommendation_status">[] = ["open", "in_progress", "reso
 async function fetchRecommendations(companyId: string): Promise<RecRow[]> {
   const { data, error } = await supabase
     .from("recommendations")
-    .select("*, control:controls(control_ref, description, domain)")
+    .select("*, control:controls(control_ref, description, domain, source_hints)")
     .eq("company_id", companyId)
     .order("severity", { ascending: false })
     .order("created_at", { ascending: false });
@@ -47,6 +53,7 @@ export default function Recommendations() {
   const [statusFilter, setStatusFilter] = useState<"all" | Enums<"recommendation_status">>("all");
   const [severityFilter, setSeverityFilter] = useState<"all" | Enums<"recommendation_severity">>("all");
   const [search, setSearch] = useState("");
+  const [selectedSources, setSelectedSources] = useState<Set<string>>(new Set());
 
   const recsQuery = useQuery({
     queryKey: ["recommendations", activeCompany?.id],
@@ -144,11 +151,15 @@ export default function Recommendations() {
     return recs.filter((r) => {
       if (statusFilter !== "all" && r.status !== statusFilter) return false;
       if (severityFilter !== "all" && r.severity !== severityFilter) return false;
+      if (selectedSources.size > 0) {
+        const hits = r.control?.source_hints ?? [];
+        if (!hits.some((h) => selectedSources.has(h))) return false;
+      }
       if (!q) return true;
       const blob = `${r.control?.control_ref ?? ""} ${r.control?.domain ?? ""} ${r.control?.description ?? ""} ${r.summary} ${r.details ?? ""}`.toLowerCase();
       return blob.includes(q);
     });
-  }, [recs, statusFilter, severityFilter, search]);
+  }, [recs, statusFilter, severityFilter, search, selectedSources]);
 
   function exportCSV() {
     if (!activeCompany) return;
@@ -202,30 +213,44 @@ export default function Recommendations() {
       />
 
       <Card className="mb-3">
-        <CardContent className="p-3 flex flex-wrap items-center gap-2">
-          <Input
-            placeholder="Search control, domain, summary, details…"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="max-w-sm h-8"
+        <CardContent className="p-3 space-y-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <Input
+              placeholder="Search control, domain, summary, details…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="max-w-sm h-8"
+            />
+            <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v as typeof statusFilter)}>
+              <SelectTrigger className="w-36 h-8 text-xs"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All statuses</SelectItem>
+                {STATUSES.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+              </SelectContent>
+            </Select>
+            <Select value={severityFilter} onValueChange={(v) => setSeverityFilter(v as typeof severityFilter)}>
+              <SelectTrigger className="w-36 h-8 text-xs"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All severities</SelectItem>
+                {SEVERITIES.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+              </SelectContent>
+            </Select>
+            <span className="text-xs text-muted-foreground ml-auto">
+              {filtered.length} of {recs.length}
+            </span>
+          </div>
+          <SourceFilterChips
+            selected={selectedSources}
+            onToggle={(v) => {
+              setSelectedSources((prev) => {
+                const next = new Set(prev);
+                if (next.has(v)) next.delete(v);
+                else next.add(v);
+                return next;
+              });
+            }}
+            onClear={() => setSelectedSources(new Set())}
           />
-          <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v as typeof statusFilter)}>
-            <SelectTrigger className="w-36 h-8 text-xs"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All statuses</SelectItem>
-              {STATUSES.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
-            </SelectContent>
-          </Select>
-          <Select value={severityFilter} onValueChange={(v) => setSeverityFilter(v as typeof severityFilter)}>
-            <SelectTrigger className="w-36 h-8 text-xs"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All severities</SelectItem>
-              {SEVERITIES.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
-            </SelectContent>
-          </Select>
-          <span className="text-xs text-muted-foreground ml-auto">
-            {filtered.length} of {recs.length}
-          </span>
         </CardContent>
       </Card>
 
@@ -265,6 +290,7 @@ export default function Recommendations() {
             <TableRow>
               <TableHead className="w-28">Control</TableHead>
               <TableHead className="w-32">Domain</TableHead>
+              <TableHead className="w-44">Source</TableHead>
               <TableHead>Recommendation</TableHead>
               <TableHead className="w-28">Severity</TableHead>
               <TableHead className="w-40">Status</TableHead>
@@ -273,10 +299,10 @@ export default function Recommendations() {
           </TableHeader>
           <TableBody>
             {recsQuery.isLoading ? (
-              <TableRow><TableCell colSpan={6} className="py-10 text-center text-sm text-muted-foreground">Loading…</TableCell></TableRow>
+              <TableRow><TableCell colSpan={7} className="py-10 text-center text-sm text-muted-foreground">Loading…</TableCell></TableRow>
             ) : filtered.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={6} className="py-10 text-center text-sm text-muted-foreground">
+                <TableCell colSpan={7} className="py-10 text-center text-sm text-muted-foreground">
                   {recs.length === 0
                     ? "Run \"Draft from Gaps\" above to seed recommendations."
                     : "No recommendations match the current filters."}
@@ -290,6 +316,16 @@ export default function Recommendations() {
                   </TableCell>
                   <TableCell className="text-xs align-top pt-3">
                     {r.control?.domain && <Badge variant="outline" className="text-[10px]">{r.control.domain}</Badge>}
+                  </TableCell>
+                  <TableCell className="align-top pt-3">
+                    <div className="flex flex-wrap gap-1">
+                      {(r.control?.source_hints ?? []).map((h) => (
+                        <Badge key={h} variant="outline" className="text-[10px]">{h}</Badge>
+                      ))}
+                      {(r.control?.source_hints ?? []).length === 0 && (
+                        <span className="text-xs text-muted-foreground">—</span>
+                      )}
+                    </div>
                   </TableCell>
                   <TableCell>
                     <Textarea

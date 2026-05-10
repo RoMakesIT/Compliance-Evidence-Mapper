@@ -16,6 +16,7 @@ type ControlOption = {
   domain: string | null;
   parent_control_id: string | null;
   evidence_keywords: string | null;
+  source_hints: string[] | null;
 };
 
 async function fetchSecureframeOptions(): Promise<ControlOption[]> {
@@ -27,7 +28,7 @@ async function fetchSecureframeOptions(): Promise<ControlOption[]> {
   if (fwErr) throw fwErr;
   const { data, error } = await supabase
     .from("controls")
-    .select("id, control_ref, description, domain, parent_control_id, evidence_keywords")
+    .select("id, control_ref, description, domain, parent_control_id, evidence_keywords, source_hints")
     .eq("framework_id", fw.id)
     .order("control_ref");
   if (error) throw error;
@@ -76,7 +77,16 @@ interface Props {
   // only to compute keyword-overlap suggestions; pass an empty string to
   // disable suggestions.
   evidenceText?: string;
+  // Operator-set source system for the evidence (e.g. "M365"). When set,
+  // controls whose source_hints include this value get a score boost.
+  evidenceSource?: string | null;
 }
+
+// Bonus added to a control's score when its source_hints array includes the
+// evidence's labeled source_system. Roughly equal to "two extra keyword
+// hits" — strong enough to surface a hinted control even if its description
+// has no overlap, but not so strong it drowns out actual content matches.
+const SOURCE_MATCH_BOOST = 2;
 
 export function ControlPicker({
   open,
@@ -84,6 +94,7 @@ export function ControlPicker({
   selectedControlIds,
   onConfirm,
   evidenceText = "",
+  evidenceSource = null,
 }: Props) {
   const [search, setSearch] = useState("");
   const [working, setWorking] = useState(false);
@@ -106,19 +117,24 @@ export function ControlPicker({
 
   const evTokens = useMemo(() => tokenize(evidenceText), [evidenceText]);
 
-  // Score every control by keyword overlap with the evidence text.
+  // Score every control by keyword overlap with the evidence text. Add a
+  // boost when the evidence's labeled source matches one of the control's
+  // source_hints — operators frequently know "this came from M365" before
+  // they know which AC-* it satisfies.
   const scored = useMemo(() => {
     const all = optionsQuery.data ?? [];
-    if (evTokens.size === 0) return new Map<string, number>();
     const m = new Map<string, number>();
     for (const c of all) {
       const ct = controlTokens(c);
       let score = 0;
       for (const t of evTokens) if (ct.has(t)) score += 1;
+      if (evidenceSource && (c.source_hints ?? []).includes(evidenceSource)) {
+        score += SOURCE_MATCH_BOOST;
+      }
       if (score > 0) m.set(c.id, score);
     }
     return m;
-  }, [optionsQuery.data, evTokens]);
+  }, [optionsQuery.data, evTokens, evidenceSource]);
 
   const all = optionsQuery.data ?? [];
   const q = search.toLowerCase().trim();
@@ -170,10 +186,19 @@ export function ControlPicker({
       >
         <Checkbox checked={checked} onCheckedChange={() => toggle(c.id)} className="mt-0.5" />
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <span className="font-mono text-xs">{c.control_ref}</span>
             {c.domain && <Badge variant="outline" className="text-[10px]">{c.domain}</Badge>}
             {c.parent_control_id && <span className="text-[10px] text-muted-foreground">child</span>}
+            {(c.source_hints ?? []).map((h) => (
+              <Badge
+                key={h}
+                variant={evidenceSource === h ? "default" : "outline"}
+                className="text-[9px] px-1 py-0"
+              >
+                {h}
+              </Badge>
+            ))}
             {score !== undefined && score > 0 && (
               <span className="ml-auto text-[10px] text-muted-foreground inline-flex items-center gap-0.5">
                 <Sparkles className="h-3 w-3" /> {score}
