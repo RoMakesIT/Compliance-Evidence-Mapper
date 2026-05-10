@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Layout from "@/components/Layout";
 import { PageHeader } from "@/components/PageHeader";
 import { Button } from "@/components/ui/button";
@@ -15,30 +16,77 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { useStore } from "@/lib/store";
 import { Badge } from "@/components/ui/badge";
-import { Trash2, Check } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
+import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@/lib/auth";
+import type { Tables, Enums } from "@/integrations/supabase/types";
+
+type CompanyRow = Tables<"companies"> & { role: Enums<"company_role"> };
+
+async function fetchCompanies(userId: string): Promise<CompanyRow[]> {
+  // Pull every company the current user is a member of, plus their role.
+  const { data, error } = await supabase
+    .from("company_members")
+    .select("role, company:companies(*)")
+    .eq("user_id", userId)
+    .order("created_at", { ascending: true });
+  if (error) throw error;
+  const rows: CompanyRow[] = [];
+  for (const row of data ?? []) {
+    if (row.company) rows.push({ ...row.company, role: row.role });
+  }
+  return rows;
+}
 
 export default function Companies() {
-  const { companies, addCompany, deleteCompany, activeCompanyId, setActiveCompanyId, evidence, mappings } =
-    useStore();
+  const { user } = useAuth();
+  const qc = useQueryClient();
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState({ name: "", industry: "", notes: "" });
 
-  function submit() {
-    if (!form.name.trim()) return;
-    const c = addCompany(form);
-    setForm({ name: "", industry: "", notes: "" });
-    setOpen(false);
-    toast({ title: "Company created", description: c.name });
-  }
+  const companiesQuery = useQuery({
+    queryKey: ["companies", user?.id],
+    queryFn: () => fetchCompanies(user!.id),
+    enabled: !!user,
+  });
+
+  const createCompany = useMutation({
+    mutationFn: async (input: { name: string; industry: string; notes: string }) => {
+      if (!user) throw new Error("Not authenticated");
+      const slug = input.name
+        .toLowerCase()
+        .trim()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "")
+        .slice(0, 60) || null;
+      const { data, error } = await supabase.rpc("create_company", {
+        p_name: input.name.trim(),
+        p_slug: slug,
+        p_industry: input.industry.trim() || null,
+        p_notes: input.notes.trim() || null,
+      });
+      if (error) throw error;
+      return data!;
+    },
+    onSuccess: (c) => {
+      qc.invalidateQueries({ queryKey: ["companies"] });
+      toast({ title: "Company created", description: c.name });
+      setForm({ name: "", industry: "", notes: "" });
+      setOpen(false);
+    },
+    onError: (e: Error) => {
+      toast({ title: "Could not create company", description: e.message, variant: "destructive" });
+    },
+  });
+
+  const companies = companiesQuery.data ?? [];
 
   return (
     <Layout>
       <PageHeader
         title="Companies"
-        description="Each company has its own evidence library and mapping status."
+        description="Each company has its own evidence library and control adoption."
         actions={
           <Dialog open={open} onOpenChange={setOpen}>
             <DialogTrigger asChild>
@@ -63,14 +111,32 @@ export default function Companies() {
                 </div>
               </div>
               <DialogFooter>
-                <Button onClick={submit}>Create</Button>
+                <Button
+                  onClick={() => {
+                    if (!form.name.trim()) return;
+                    createCompany.mutate(form);
+                  }}
+                  disabled={createCompany.isPending || !form.name.trim()}
+                >
+                  {createCompany.isPending ? "Creating…" : "Create"}
+                </Button>
               </DialogFooter>
             </DialogContent>
           </Dialog>
         }
       />
 
-      {companies.length === 0 ? (
+      {companiesQuery.isLoading ? (
+        <Card>
+          <CardContent className="py-12 text-center text-sm text-muted-foreground">Loading companies…</CardContent>
+        </Card>
+      ) : companiesQuery.isError ? (
+        <Card>
+          <CardContent className="py-12 text-center text-sm text-destructive">
+            Failed to load: {(companiesQuery.error as Error).message}
+          </CardContent>
+        </Card>
+      ) : companies.length === 0 ? (
         <Card>
           <CardContent className="py-12 text-center text-sm text-muted-foreground">
             No companies yet. Create one to start mapping evidence.
@@ -81,52 +147,25 @@ export default function Companies() {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead></TableHead>
                 <TableHead>Name</TableHead>
                 <TableHead>Industry</TableHead>
-                <TableHead>Evidence</TableHead>
-                <TableHead>Mappings</TableHead>
+                <TableHead>Role</TableHead>
                 <TableHead>Created</TableHead>
-                <TableHead></TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {companies.map((c) => {
-                const evCount = evidence.filter((e) => e.company_id === c.id).length;
-                const mapCount = mappings.filter((m) => m.company_id === c.id).length;
-                const isActive = c.id === activeCompanyId;
-                return (
-                  <TableRow key={c.id}>
-                    <TableCell>
-                      {isActive ? (
-                        <Badge>Active</Badge>
-                      ) : (
-                        <Button size="sm" variant="ghost" onClick={() => setActiveCompanyId(c.id)}>
-                          <Check className="h-4 w-4" /> Set active
-                        </Button>
-                      )}
-                    </TableCell>
-                    <TableCell className="font-medium">{c.name}</TableCell>
-                    <TableCell className="text-muted-foreground">{c.industry || "—"}</TableCell>
-                    <TableCell>{evCount}</TableCell>
-                    <TableCell>{mapCount}</TableCell>
-                    <TableCell className="text-muted-foreground text-xs">
-                      {new Date(c.created_at).toLocaleDateString()}
-                    </TableCell>
-                    <TableCell>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => {
-                          if (confirm(`Delete company "${c.name}" and all its evidence/mappings?`)) deleteCompany(c.id);
-                        }}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                );
-              })}
+              {companies.map((c) => (
+                <TableRow key={c.id}>
+                  <TableCell className="font-medium">{c.name}</TableCell>
+                  <TableCell className="text-muted-foreground">{c.industry || "—"}</TableCell>
+                  <TableCell>
+                    <Badge variant="secondary">{c.role}</Badge>
+                  </TableCell>
+                  <TableCell className="text-muted-foreground text-xs">
+                    {new Date(c.created_at).toLocaleDateString()}
+                  </TableCell>
+                </TableRow>
+              ))}
             </TableBody>
           </Table>
         </Card>
