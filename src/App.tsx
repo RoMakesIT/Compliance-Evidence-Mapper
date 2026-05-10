@@ -3,7 +3,6 @@ import { BrowserRouter, Route, Routes } from "react-router-dom";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { StoreProvider } from "@/lib/store";
 import { AuthProvider } from "@/lib/auth";
 import { ActiveCompanyProvider } from "@/lib/active-company";
 import { RequireAuth } from "@/components/RequireAuth";
@@ -26,8 +25,7 @@ const App = () => (
   <QueryClientProvider client={queryClient}>
     <AuthProvider>
       <ActiveCompanyProvider>
-        <StoreProvider>
-          <TooltipProvider>
+        <TooltipProvider>
           <Toaster />
           <Sonner />
           <BrowserRouter>
@@ -44,8 +42,7 @@ const App = () => (
               <Route path="*" element={<NotFound />} />
             </Routes>
           </BrowserRouter>
-          </TooltipProvider>
-        </StoreProvider>
+        </TooltipProvider>
       </ActiveCompanyProvider>
     </AuthProvider>
   </QueryClientProvider>
