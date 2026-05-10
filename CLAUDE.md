@@ -86,6 +86,21 @@ supabase/
 - Storage buckets for evidence files; never store raw files in tables
 - `src/integrations/supabase/client.ts` is the only place that calls `createClient`
 
+#### **NEVER run `supabase db reset` once the project has real data**
+
+`supabase db reset` drops the entire database AND wipes the storage volume — including `auth.users`, every uploaded evidence file, and every row of customer data. Once the user has put any real evidence in, this command is destructive and unrecoverable without a backup.
+
+**Use this matrix instead:**
+
+| Task | Command |
+|---|---|
+| Apply a new migration to a populated DB | `supabase migration up` |
+| Add a column **and** rewrite existing rows | Put the `alter table` *and* an `update` statement in the same migration file, then `supabase migration up` |
+| Re-seed reference data (controls/frameworks) | Make the seed an `upsert` SQL block in a migration, then `supabase migration up` — do NOT rely on `seed.sql` since that only runs on `db reset` |
+| Recover from "I have to reset" | Run `bin/backup.sh` first. Reset only after you have a `backups/<ts>/` snapshot. |
+
+If you find yourself thinking "I'll just `db reset` to repopulate the seed," stop — write a data-modifying migration instead. The user's evidence files and accounts are not recoverable from `seed.sql`.
+
 ### Secrets
 
 - `.env.local` only; never commit
