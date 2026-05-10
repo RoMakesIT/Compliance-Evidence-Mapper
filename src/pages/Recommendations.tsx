@@ -5,6 +5,7 @@ import Layout from "@/components/Layout";
 import { PageHeader } from "@/components/PageHeader";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -43,7 +44,9 @@ async function fetchRecommendations(companyId: string): Promise<RecRow[]> {
 export default function Recommendations() {
   const { activeCompany } = useActiveCompany();
   const qc = useQueryClient();
-  const [filter, setFilter] = useState<"all" | Enums<"recommendation_status">>("all");
+  const [statusFilter, setStatusFilter] = useState<"all" | Enums<"recommendation_status">>("all");
+  const [severityFilter, setSeverityFilter] = useState<"all" | Enums<"recommendation_severity">>("all");
+  const [search, setSearch] = useState("");
 
   const recsQuery = useQuery({
     queryKey: ["recommendations", activeCompany?.id],
@@ -136,10 +139,16 @@ export default function Recommendations() {
   });
 
   const recs = recsQuery.data ?? [];
-  const filtered = useMemo(
-    () => (filter === "all" ? recs : recs.filter((r) => r.status === filter)),
-    [recs, filter],
-  );
+  const filtered = useMemo(() => {
+    const q = search.toLowerCase().trim();
+    return recs.filter((r) => {
+      if (statusFilter !== "all" && r.status !== statusFilter) return false;
+      if (severityFilter !== "all" && r.severity !== severityFilter) return false;
+      if (!q) return true;
+      const blob = `${r.control?.control_ref ?? ""} ${r.control?.domain ?? ""} ${r.control?.description ?? ""} ${r.summary} ${r.details ?? ""}`.toLowerCase();
+      return blob.includes(q);
+    });
+  }, [recs, statusFilter, severityFilter, search]);
 
   function exportCSV() {
     if (!activeCompany) return;
@@ -192,16 +201,63 @@ export default function Recommendations() {
         }
       />
 
-      <div className="mb-3 flex items-center gap-2">
-        <Select value={filter} onValueChange={(v) => setFilter(v as typeof filter)}>
-          <SelectTrigger className="w-44 h-8 text-xs"><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All statuses</SelectItem>
-            {STATUSES.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
-          </SelectContent>
-        </Select>
-        <span className="text-xs text-muted-foreground">{filtered.length} of {recs.length}</span>
-      </div>
+      <Card className="mb-3">
+        <CardContent className="p-3 flex flex-wrap items-center gap-2">
+          <Input
+            placeholder="Search control, domain, summary, details…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="max-w-sm h-8"
+          />
+          <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v as typeof statusFilter)}>
+            <SelectTrigger className="w-36 h-8 text-xs"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All statuses</SelectItem>
+              {STATUSES.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+            </SelectContent>
+          </Select>
+          <Select value={severityFilter} onValueChange={(v) => setSeverityFilter(v as typeof severityFilter)}>
+            <SelectTrigger className="w-36 h-8 text-xs"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All severities</SelectItem>
+              {SEVERITIES.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+            </SelectContent>
+          </Select>
+          <span className="text-xs text-muted-foreground ml-auto">
+            {filtered.length} of {recs.length}
+          </span>
+        </CardContent>
+      </Card>
+
+      {recsQuery.isError && (
+        <Card className="mb-3">
+          <CardContent className="py-4 text-sm text-destructive">
+            Failed to load recommendations: {(recsQuery.error as Error).message}
+          </CardContent>
+        </Card>
+      )}
+
+      {!recsQuery.isLoading && recs.length === 0 && (
+        <Card className="mb-3">
+          <CardContent className="py-10 text-center space-y-3">
+            <div className="text-sm text-muted-foreground">
+              No recommendations yet for {activeCompany.name}.
+            </div>
+            <Button
+              onClick={() => draftFromGaps.mutate()}
+              disabled={draftFromGaps.isPending}
+            >
+              <Wand2 className="h-4 w-4" />{" "}
+              {draftFromGaps.isPending ? "Drafting…" : "Draft from Gaps"}
+            </Button>
+            <div className="text-xs text-muted-foreground max-w-md mx-auto">
+              Walks every Secureframe control without any tagged evidence and
+              seeds a recommendation row from the control's recommendation
+              template.
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <Table>
@@ -219,7 +275,13 @@ export default function Recommendations() {
             {recsQuery.isLoading ? (
               <TableRow><TableCell colSpan={6} className="py-10 text-center text-sm text-muted-foreground">Loading…</TableCell></TableRow>
             ) : filtered.length === 0 ? (
-              <TableRow><TableCell colSpan={6} className="py-10 text-center text-sm text-muted-foreground">No recommendations. Click "Draft from Gaps" to seed.</TableCell></TableRow>
+              <TableRow>
+                <TableCell colSpan={6} className="py-10 text-center text-sm text-muted-foreground">
+                  {recs.length === 0
+                    ? "Run \"Draft from Gaps\" above to seed recommendations."
+                    : "No recommendations match the current filters."}
+                </TableCell>
+              </TableRow>
             ) : (
               filtered.map((r) => (
                 <TableRow key={r.id}>
