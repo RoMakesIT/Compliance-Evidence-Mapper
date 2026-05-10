@@ -362,6 +362,13 @@ export default function EvidencePage() {
           if (!o) setPickerEvidence(null);
         }}
         selectedControlIds={new Set(pickerEvidence?.tags.map((t) => t.control_id) ?? [])}
+        evidenceText={
+          pickerEvidence
+            ? [pickerEvidence.title, pickerEvidence.description, pickerEvidence.storage_path?.split("/").pop()]
+                .filter(Boolean)
+                .join(" ")
+            : ""
+        }
         onConfirm={async (controlIds) => {
           if (pickerEvidence) {
             await setTags.mutateAsync({ evidence: pickerEvidence, controlIds });
