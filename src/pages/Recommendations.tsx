@@ -1,12 +1,12 @@
 import { useMemo, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Link } from "react-router-dom";
 import Layout from "@/components/Layout";
 import { PageHeader } from "@/components/PageHeader";
-import { useStore } from "@/lib/store";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import {
   Select,
   SelectContent,
@@ -14,114 +14,193 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Trash2, Wand2 } from "lucide-react";
-import { Link } from "react-router-dom";
-import { RecommendationStatus } from "@/lib/types";
-import { downloadCSV } from "@/lib/csv";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Trash2, Wand2, Download } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
+import { supabase } from "@/integrations/supabase/client";
+import { useActiveCompany } from "@/lib/active-company";
+import { downloadCSV } from "@/lib/csv";
+import type { Tables, Enums } from "@/integrations/supabase/types";
 
-const STATUSES: RecommendationStatus[] = ["Draft", "Reviewed", "Included in Report", "Deferred"];
+type RecRow = Tables<"recommendations"> & {
+  control: { control_ref: string; description: string | null; domain: string | null } | null;
+};
+
+const SEVERITIES: Enums<"recommendation_severity">[] = ["low", "med", "high", "critical"];
+const STATUSES: Enums<"recommendation_status">[] = ["open", "in_progress", "resolved", "dismissed"];
+
+async function fetchRecommendations(companyId: string): Promise<RecRow[]> {
+  const { data, error } = await supabase
+    .from("recommendations")
+    .select("*, control:controls(control_ref, description, domain)")
+    .eq("company_id", companyId)
+    .order("severity", { ascending: false })
+    .order("created_at", { ascending: false });
+  if (error) throw error;
+  return (data ?? []) as unknown as RecRow[];
+}
 
 export default function Recommendations() {
-  const {
-    activeCompanyId,
-    companies,
-    controls,
-    mappings,
-    recommendations,
-    addRecommendation,
-    updateRecommendation,
-    deleteRecommendation,
-  } = useStore();
-  const company = companies.find((c) => c.id === activeCompanyId);
-  const myRecs = useMemo(
-    () => recommendations.filter((r) => r.company_id === activeCompanyId),
-    [recommendations, activeCompanyId],
-  );
-  const [filter, setFilter] = useState<string>("all");
+  const { activeCompany } = useActiveCompany();
+  const qc = useQueryClient();
+  const [filter, setFilter] = useState<"all" | Enums<"recommendation_status">>("all");
 
-  if (!company) {
+  const recsQuery = useQuery({
+    queryKey: ["recommendations", activeCompany?.id],
+    queryFn: () => fetchRecommendations(activeCompany!.id),
+    enabled: !!activeCompany,
+  });
+
+  const updateRec = useMutation({
+    mutationFn: async (input: {
+      id: string;
+      patch: Partial<Pick<Tables<"recommendations">, "summary" | "details" | "severity" | "status">>;
+    }) => {
+      const { error } = await supabase.from("recommendations").update(input.patch).eq("id", input.id);
+      if (error) throw error;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["recommendations", activeCompany?.id] }),
+    onError: (e: Error) => toast({ title: "Update failed", description: e.message, variant: "destructive" }),
+  });
+
+  const deleteRec = useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await supabase.from("recommendations").delete().eq("id", id);
+      if (error) throw error;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["recommendations", activeCompany?.id] }),
+  });
+
+  const draftFromGaps = useMutation({
+    mutationFn: async () => {
+      if (!activeCompany) throw new Error("No active company");
+      // Pull every Secureframe control + the active company's tagged controls.
+      const { data: fw } = await supabase.from("frameworks").select("id").eq("slug", "secureframe").single();
+      if (!fw) throw new Error("Secureframe framework not found");
+      const { data: controls, error: cErr } = await supabase
+        .from("controls")
+        .select("id, control_ref, recommendation_template, parent_control_id")
+        .eq("framework_id", fw.id);
+      if (cErr) throw cErr;
+
+      const { data: companyControls } = await supabase
+        .from("company_controls")
+        .select("control_id, evidence_controls(evidence_id)")
+        .eq("company_id", activeCompany.id);
+      const taggedControlIds = new Set(
+        (companyControls ?? [])
+          .filter((cc) => (cc.evidence_controls?.length ?? 0) > 0)
+          .map((cc) => cc.control_id),
+      );
+
+      const { data: existing } = await supabase
+        .from("recommendations")
+        .select("control_id")
+        .eq("company_id", activeCompany.id);
+      const existingControlIds = new Set((existing ?? []).map((r) => r.control_id).filter(Boolean));
+
+      const toInsert: Array<{
+        company_id: string;
+        control_id: string;
+        summary: string;
+        severity: Enums<"recommendation_severity">;
+        status: Enums<"recommendation_status">;
+      }> = [];
+      for (const c of controls ?? []) {
+        if (taggedControlIds.has(c.id)) continue;
+        if (existingControlIds.has(c.id)) continue;
+        if (!c.recommendation_template) continue;
+        toInsert.push({
+          company_id: activeCompany.id,
+          control_id: c.id,
+          summary: c.recommendation_template,
+          severity: c.parent_control_id ? "med" : "high",
+          status: "open",
+        });
+      }
+      if (toInsert.length === 0) return 0;
+      // Insert in chunks to stay under PostgREST batch limits.
+      for (let i = 0; i < toInsert.length; i += 100) {
+        const chunk = toInsert.slice(i, i + 100);
+        const { error } = await supabase.from("recommendations").insert(chunk);
+        if (error) throw error;
+      }
+      return toInsert.length;
+    },
+    onSuccess: (count) => {
+      qc.invalidateQueries({ queryKey: ["recommendations", activeCompany?.id] });
+      qc.invalidateQueries({ queryKey: ["dashboard-stats", activeCompany?.id] });
+      toast({ title: `Drafted ${count} recommendations from gaps` });
+    },
+    onError: (e: Error) => toast({ title: "Could not draft", description: e.message, variant: "destructive" }),
+  });
+
+  const recs = recsQuery.data ?? [];
+  const filtered = useMemo(
+    () => (filter === "all" ? recs : recs.filter((r) => r.status === filter)),
+    [recs, filter],
+  );
+
+  function exportCSV() {
+    if (!activeCompany) return;
+    const rows = filtered.map((r) => ({
+      Company: activeCompany.name,
+      "Control Ref": r.control?.control_ref ?? "",
+      Domain: r.control?.domain ?? "",
+      Summary: r.summary,
+      Details: r.details ?? "",
+      Severity: r.severity,
+      Status: r.status,
+      Created: r.created_at,
+    }));
+    downloadCSV(`${activeCompany.name}-recommendations.csv`, rows);
+  }
+
+  if (!activeCompany) {
     return (
       <Layout>
         <PageHeader title="Recommendations" />
         <Card>
           <CardContent className="py-10 text-center text-sm text-muted-foreground">
-            Select an active company first. <Link to="/companies" className="text-primary underline">Manage companies</Link>
+            No active company. Pick one in the sidebar, or{" "}
+            <Link to="/companies" className="text-primary underline">create a company</Link>.
           </CardContent>
         </Card>
       </Layout>
     );
   }
 
-  function generateGaps() {
-    const approved = new Set(
-      mappings
-        .filter(
-          (m) =>
-            m.company_id === company!.id && (m.mapping_status === "Approved" || m.mapping_status === "Manual"),
-        )
-        .map((m) => m.control_id),
-    );
-    const existingRec = new Set(myRecs.map((r) => r.control_id));
-    let added = 0;
-    controls.forEach((c) => {
-      if (!approved.has(c.id) && !existingRec.has(c.id) && c.recommendation_template) {
-        addRecommendation({
-          company_id: company!.id,
-          control_id: c.id,
-          recommendation_text: c.recommendation_template,
-          priority: c.parent_control_code ? "Medium" : "High",
-          status: "Draft",
-          notes: "",
-        });
-        added++;
-      }
-    });
-    toast({ title: `Generated ${added} draft recommendations` });
-  }
-
-  function exportRecs() {
-    const rows = myRecs.map((r) => {
-      const c = controls.find((x) => x.id === r.control_id);
-      return {
-        Company: company!.name,
-        "Control Code": c?.control_code || "",
-        "SOC 2 Criteria": c?.soc2_effective_mapping || "",
-        "Recommendation Text": r.recommendation_text,
-        Priority: r.priority,
-        Status: r.status,
-        Notes: r.notes,
-      };
-    });
-    downloadCSV(`${company!.name}-recommendations.csv`, rows);
-  }
-
-  const filtered = filter === "all" ? myRecs : myRecs.filter((r) => r.status === filter);
-
   return (
     <Layout>
       <PageHeader
         title="Recommendations"
-        description={`Workspace: ${company.name}`}
+        description={`Workspace: ${activeCompany.name}`}
         actions={
           <>
-            <Button size="sm" variant="outline" onClick={generateGaps}>
-              <Wand2 className="h-4 w-4" /> Draft from Gaps
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => draftFromGaps.mutate()}
+              disabled={draftFromGaps.isPending}
+            >
+              <Wand2 className="h-4 w-4" /> {draftFromGaps.isPending ? "Working…" : "Draft from Gaps"}
             </Button>
-            <Button size="sm" onClick={exportRecs}>Export</Button>
+            <Button size="sm" onClick={exportCSV} disabled={filtered.length === 0}>
+              <Download className="h-4 w-4" /> Export CSV
+            </Button>
           </>
         }
       />
 
       <div className="mb-3 flex items-center gap-2">
-        <Select value={filter} onValueChange={setFilter}>
+        <Select value={filter} onValueChange={(v) => setFilter(v as typeof filter)}>
           <SelectTrigger className="w-44 h-8 text-xs"><SelectValue /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All statuses</SelectItem>
             {STATUSES.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
           </SelectContent>
         </Select>
-        <span className="text-xs text-muted-foreground">{filtered.length} of {myRecs.length}</span>
+        <span className="text-xs text-muted-foreground">{filtered.length} of {recs.length}</span>
       </div>
 
       <Card>
@@ -129,67 +208,67 @@ export default function Recommendations() {
           <TableHeader>
             <TableRow>
               <TableHead className="w-28">Control</TableHead>
-              <TableHead className="w-32">SOC 2</TableHead>
+              <TableHead className="w-32">Domain</TableHead>
               <TableHead>Recommendation</TableHead>
-              <TableHead className="w-28">Priority</TableHead>
+              <TableHead className="w-28">Severity</TableHead>
               <TableHead className="w-40">Status</TableHead>
-              <TableHead></TableHead>
+              <TableHead className="w-10"></TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
-            {filtered.length === 0 && (
-              <TableRow>
-                <TableCell colSpan={6} className="text-center text-sm text-muted-foreground py-8">
-                  No recommendations. Click "Draft from Gaps" to seed.
-                </TableCell>
-              </TableRow>
-            )}
-            {filtered.map((r) => {
-              const c = controls.find((x) => x.id === r.control_id);
-              return (
+            {recsQuery.isLoading ? (
+              <TableRow><TableCell colSpan={6} className="py-10 text-center text-sm text-muted-foreground">Loading…</TableCell></TableRow>
+            ) : filtered.length === 0 ? (
+              <TableRow><TableCell colSpan={6} className="py-10 text-center text-sm text-muted-foreground">No recommendations. Click "Draft from Gaps" to seed.</TableCell></TableRow>
+            ) : (
+              filtered.map((r) => (
                 <TableRow key={r.id}>
-                  <TableCell className="font-mono text-xs">{c?.control_code}</TableCell>
-                  <TableCell>
-                    <div className="flex flex-wrap gap-1">
-                      {(c?.soc2_effective_mapping || "")
-                        .split(/[,;]/)
-                        .map((s) => s.trim())
-                        .filter(Boolean)
-                        .map((s) => (
-                          <Badge key={s} variant="outline" className="text-[10px]">{s}</Badge>
-                        ))}
-                    </div>
+                  <TableCell className="font-mono text-xs align-top pt-3">
+                    {r.control?.control_ref ?? "—"}
+                  </TableCell>
+                  <TableCell className="text-xs align-top pt-3">
+                    {r.control?.domain && <Badge variant="outline" className="text-[10px]">{r.control.domain}</Badge>}
                   </TableCell>
                   <TableCell>
                     <Textarea
-                      value={r.recommendation_text}
-                      onChange={(e) => updateRecommendation(r.id, { recommendation_text: e.target.value })}
+                      defaultValue={r.summary}
+                      onBlur={(e) => {
+                        if (e.target.value !== r.summary) {
+                          updateRec.mutate({ id: r.id, patch: { summary: e.target.value } });
+                        }
+                      }}
                       className="text-xs min-h-[60px]"
                     />
                     <Textarea
-                      value={r.notes}
-                      onChange={(e) => updateRecommendation(r.id, { notes: e.target.value })}
-                      placeholder="Notes…"
+                      defaultValue={r.details ?? ""}
+                      onBlur={(e) => {
+                        if ((e.target.value || null) !== (r.details ?? null)) {
+                          updateRec.mutate({ id: r.id, patch: { details: e.target.value || null } });
+                        }
+                      }}
+                      placeholder="Notes / details…"
                       className="text-xs min-h-[40px] mt-1"
                     />
                   </TableCell>
                   <TableCell>
                     <Select
-                      value={r.priority}
-                      onValueChange={(v) => updateRecommendation(r.id, { priority: v as "Low" | "Medium" | "High" })}
+                      value={r.severity}
+                      onValueChange={(v) =>
+                        updateRec.mutate({ id: r.id, patch: { severity: v as Enums<"recommendation_severity"> } })
+                      }
                     >
                       <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="Low">Low</SelectItem>
-                        <SelectItem value="Medium">Medium</SelectItem>
-                        <SelectItem value="High">High</SelectItem>
+                        {SEVERITIES.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
                       </SelectContent>
                     </Select>
                   </TableCell>
                   <TableCell>
                     <Select
                       value={r.status}
-                      onValueChange={(v) => updateRecommendation(r.id, { status: v as RecommendationStatus })}
+                      onValueChange={(v) =>
+                        updateRec.mutate({ id: r.id, patch: { status: v as Enums<"recommendation_status"> } })
+                      }
                     >
                       <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
                       <SelectContent>
@@ -198,13 +277,13 @@ export default function Recommendations() {
                     </Select>
                   </TableCell>
                   <TableCell>
-                    <Button size="sm" variant="ghost" onClick={() => deleteRecommendation(r.id)}>
+                    <Button size="sm" variant="ghost" onClick={() => deleteRec.mutate(r.id)} title="Delete">
                       <Trash2 className="h-4 w-4" />
                     </Button>
                   </TableCell>
                 </TableRow>
-              );
-            })}
+              ))
+            )}
           </TableBody>
         </Table>
       </Card>

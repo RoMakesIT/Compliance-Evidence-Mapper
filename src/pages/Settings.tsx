@@ -1,114 +1,143 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import Layout from "@/components/Layout";
 import { PageHeader } from "@/components/PageHeader";
-import { useStore } from "@/lib/store";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { Badge } from "@/components/ui/badge";
 import { toast } from "@/hooks/use-toast";
+import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@/lib/auth";
+import { useActiveCompany } from "@/lib/active-company";
+
+async function fetchProfile(userId: string) {
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("display_name, default_company_id, created_at")
+    .eq("id", userId)
+    .single();
+  if (error) throw error;
+  return data;
+}
 
 export default function Settings() {
-  const { llm, setLLM } = useStore();
-  const [form, setForm] = useState(llm);
-  const [testing, setTesting] = useState(false);
+  const { user, signOut } = useAuth();
+  const { activeCompany, companies } = useActiveCompany();
+  const qc = useQueryClient();
 
-  async function test() {
-    setTesting(true);
-    try {
-      if (form.mode === "Local Ollama") {
-        const res = await fetch(`${form.ollama_endpoint}/api/tags`);
-        if (res.ok) toast({ title: "Connected", description: "Ollama responded." });
-        else throw new Error(`HTTP ${res.status}`);
-      } else if (form.mode === "Off") {
-        toast({ title: "LLM is Off", description: "MVP uses keyword matching only." });
-      } else {
-        toast({ title: "Cloud API", description: "Cloud API support is a placeholder for now." });
-      }
-    } catch (e) {
-      toast({ title: "Connection failed", description: String((e as Error).message) });
-    } finally {
-      setTesting(false);
+  const profileQuery = useQuery({
+    queryKey: ["profile", user?.id],
+    queryFn: () => fetchProfile(user!.id),
+    enabled: !!user,
+  });
+
+  const [displayName, setDisplayName] = useState<string>("");
+  const [hydrated, setHydrated] = useState(false);
+
+  // Hydrate the input once the profile loads.
+  useEffect(() => {
+    if (profileQuery.data && !hydrated) {
+      setDisplayName(profileQuery.data.display_name ?? "");
+      setHydrated(true);
     }
-  }
+  }, [profileQuery.data, hydrated]);
 
-  function save() {
-    setLLM(form);
-    toast({ title: "Settings saved" });
+  async function saveProfile() {
+    if (!user) return;
+    const { error } = await supabase
+      .from("profiles")
+      .update({ display_name: displayName.trim() || null })
+      .eq("id", user.id);
+    if (error) {
+      toast({ title: "Save failed", description: error.message, variant: "destructive" });
+      return;
+    }
+    qc.invalidateQueries({ queryKey: ["profile", user.id] });
+    toast({ title: "Profile saved" });
   }
 
   return (
     <Layout>
-      <PageHeader title="Settings" description="Local LLM placeholder. MVP runs on keyword matching." />
+      <PageHeader title="Settings" description="Account, workspace, and app info." />
 
-      <Card className="max-w-2xl">
-        <CardContent className="p-5 space-y-4">
-          <div>
-            <Label>LLM Mode</Label>
-            <Select
-              value={form.mode}
-              onValueChange={(v) => setForm({ ...form, mode: v as typeof form.mode })}
-            >
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="Off">Off (keyword matching only)</SelectItem>
-                <SelectItem value="Local Ollama">Local Ollama</SelectItem>
-                <SelectItem value="Cloud API">Cloud API</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          <div>
-            <Label>Ollama Endpoint</Label>
-            <Input value={form.ollama_endpoint} onChange={(e) => setForm({ ...form, ollama_endpoint: e.target.value })} />
-          </div>
-          <div className="grid grid-cols-2 gap-3">
+      <div className="space-y-6 max-w-2xl">
+        <Card>
+          <CardContent className="p-5 space-y-4">
+            <h3 className="text-sm font-medium">Account</h3>
             <div>
-              <Label>Model Name</Label>
-              <Input value={form.model_name} onChange={(e) => setForm({ ...form, model_name: e.target.value })} />
+              <Label>Email</Label>
+              <Input value={user?.email ?? ""} disabled className="bg-muted" />
             </div>
             <div>
-              <Label>Temperature</Label>
+              <Label htmlFor="display-name">Display name</Label>
               <Input
-                type="number"
-                step={0.1}
-                min={0}
-                max={2}
-                value={form.temperature}
-                onChange={(e) => setForm({ ...form, temperature: Number(e.target.value) })}
+                id="display-name"
+                value={displayName}
+                onChange={(e) => setDisplayName(e.target.value)}
+                placeholder="Your name"
               />
             </div>
-          </div>
-          <div className="flex gap-2 pt-2">
-            <Button onClick={save}>Save</Button>
-            <Button variant="outline" onClick={test} disabled={testing}>
-              {testing ? "Testing…" : "Test Connection"}
-            </Button>
-          </div>
+            <div className="flex gap-2">
+              <Button onClick={saveProfile} disabled={profileQuery.isLoading}>
+                Save profile
+              </Button>
+              <Button variant="outline" onClick={() => void signOut()}>
+                Sign out
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
 
-          <div className="text-xs text-muted-foreground border-t pt-3 mt-3">
-            <p className="font-medium mb-1">Future LLM output shape</p>
-            <pre className="bg-muted p-2 rounded text-[10px] overflow-auto">
-{`{
-  "evidence_summary": "...",
-  "detected_keywords": ["mfa", "authentication"],
-  "suggested_controls": [
-    { "control_code": "AC-03", "confidence": 0.91, "rationale": "..." }
-  ],
-  "soc2_support": ["CC6.1", "CC6.6"],
-  "missing_evidence": ["..."],
-  "recommendation": "..."
-}`}
-            </pre>
-          </div>
-        </CardContent>
-      </Card>
+        <Card>
+          <CardContent className="p-5 space-y-2">
+            <h3 className="text-sm font-medium">Active workspace</h3>
+            {activeCompany ? (
+              <div className="text-sm space-y-1">
+                <div>
+                  <span className="text-muted-foreground">Name:</span>{" "}
+                  <span className="font-medium">{activeCompany.name}</span>
+                </div>
+                {activeCompany.industry && (
+                  <div>
+                    <span className="text-muted-foreground">Industry:</span> {activeCompany.industry}
+                  </div>
+                )}
+                <div>
+                  <span className="text-muted-foreground">Your role:</span>{" "}
+                  <Badge variant="secondary">{activeCompany.role}</Badge>
+                </div>
+                <div className="text-xs text-muted-foreground">
+                  {companies.length} workspace{companies.length === 1 ? "" : "s"} total. Switch in the sidebar.
+                </div>
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground">No active workspace.</p>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardContent className="p-5 space-y-2">
+            <h3 className="text-sm font-medium">Backend</h3>
+            <div className="text-xs text-muted-foreground space-y-1">
+              <div>
+                <span className="font-medium text-foreground">Supabase:</span>{" "}
+                <code className="text-[11px]">{import.meta.env.VITE_SUPABASE_URL}</code>
+              </div>
+              <div>
+                Storage bucket: <code className="text-[11px]">evidence</code> (path:{" "}
+                <code className="text-[11px]">{`{company_id}/{evidence_id}/{filename}`}</code>)
+              </div>
+              <div>
+                Local backups: run <code className="text-[11px]">./bin/backup.sh</code> or use the
+                Backup app.
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
     </Layout>
   );
 }

@@ -1,12 +1,11 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import Layout from "@/components/Layout";
 import { PageHeader } from "@/components/PageHeader";
-import { useStore, newId } from "@/lib/store";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Badge } from "@/components/ui/badge";
 import {
   Select,
   SelectContent,
@@ -14,85 +13,152 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { CrosswalkStatus } from "@/lib/types";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Download } from "lucide-react";
+import { supabase } from "@/integrations/supabase/client";
 import { downloadCSV } from "@/lib/csv";
 
-const STATUSES: CrosswalkStatus[] = ["Not Started", "Suggested", "Reviewed", "Confirmed", "Rejected"];
+type Framework = { id: string; slug: string; name: string };
+
+type CrosswalkJoinRow = {
+  id: string;
+  mapping_type: string;
+  source_control_id: string;
+  target_control_id: string;
+  source: { control_ref: string; description: string | null; framework_id: string } | null;
+  target: { control_ref: string; description: string | null; framework_id: string } | null;
+};
+
+async function fetchFrameworks(): Promise<Framework[]> {
+  const { data, error } = await supabase.from("frameworks").select("id, slug, name").order("name");
+  if (error) throw error;
+  return data ?? [];
+}
+
+async function fetchCrosswalks(sourceFwId: string, targetFwId: string | null): Promise<CrosswalkJoinRow[]> {
+  // !inner converts the embedded join into an INNER JOIN so framework_id
+  // filters actually narrow the top-level rows (instead of just nulling out
+  // the embedded side).
+  let query = supabase
+    .from("crosswalks")
+    .select(
+      "id, mapping_type, source_control_id, target_control_id, source:controls!crosswalks_source_control_id_fkey!inner(control_ref, description, framework_id), target:controls!crosswalks_target_control_id_fkey!inner(control_ref, description, framework_id)",
+    )
+    .eq("source.framework_id", sourceFwId);
+  if (targetFwId) query = query.eq("target.framework_id", targetFwId);
+
+  const { data, error } = await query;
+  if (error) throw error;
+  return ((data ?? []) as unknown as CrosswalkJoinRow[]).filter((r) => r.source && r.target);
+}
 
 export default function Crosswalk() {
-  const { controls, crosswalks, upsertCrosswalk, deleteCrosswalk } = useStore();
+  const frameworksQuery = useQuery({ queryKey: ["frameworks"], queryFn: fetchFrameworks });
+  const frameworks = frameworksQuery.data ?? [];
+
+  const sfId = frameworks.find((f) => f.slug === "secureframe")?.id ?? "";
+  const soc2Id = frameworks.find((f) => f.slug === "soc2")?.id ?? "";
+
+  const [source, setSource] = useState<string>(sfId);
+  const [target, setTarget] = useState<string>(soc2Id);
   const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [mappingType, setMappingType] = useState<string>("all");
 
-  const byControl = useMemo(() => {
-    const m = new Map<string, typeof crosswalks[number]>();
-    crosswalks.forEach((c) => m.set(c.control_id, c));
-    return m;
-  }, [crosswalks]);
+  // Initialize defaults once frameworks load.
+  useEffect(() => {
+    if (!source && sfId) setSource(sfId);
+  }, [source, sfId]);
+  useEffect(() => {
+    if (!target && soc2Id) setTarget(soc2Id);
+  }, [target, soc2Id]);
 
-  const visible = useMemo(() => {
-    const q = search.toLowerCase();
-    return controls.filter((c) => {
-      const cw = byControl.get(c.id);
-      const status = cw?.review_status || "Not Started";
-      if (statusFilter !== "all" && status !== statusFilter) return false;
-      if (q && !`${c.control_code} ${c.description}`.toLowerCase().includes(q)) return false;
-      return true;
+  const crosswalksQuery = useQuery({
+    queryKey: ["crosswalks-browse", source, target],
+    queryFn: () => fetchCrosswalks(source, target || null),
+    enabled: !!source,
+  });
+
+  const filtered = useMemo(() => {
+    const all = crosswalksQuery.data ?? [];
+    const q = search.toLowerCase().trim();
+    return all.filter((cw) => {
+      if (mappingType !== "all" && cw.mapping_type !== mappingType) return false;
+      if (!q) return true;
+      const blob = `${cw.source?.control_ref ?? ""} ${cw.target?.control_ref ?? ""} ${cw.source?.description ?? ""} ${cw.target?.description ?? ""}`.toLowerCase();
+      return blob.includes(q);
     });
-  }, [controls, byControl, search, statusFilter]);
+  }, [crosswalksQuery.data, search, mappingType]);
 
-  function update(controlId: string, patch: Partial<(typeof crosswalks)[number]>) {
-    const existing = byControl.get(controlId);
-    upsertCrosswalk({
-      id: existing?.id || newId(),
-      control_id: controlId,
-      controlmap_control_name: existing?.controlmap_control_name || "",
-      controlmap_notes: existing?.controlmap_notes || "",
-      confidence: existing?.confidence ?? 0,
-      review_status: existing?.review_status || "Not Started",
-      ...patch,
-    });
-  }
-
-  function exportCrosswalk() {
-    const rows = controls.map((c) => {
-      const cw = byControl.get(c.id);
-      return {
-        "Secureframe Control Code": c.control_code,
-        "Secureframe Description": c.description,
-        "SOC 2 Effective Mapping": c.soc2_effective_mapping,
-        "Suggested ControlMap Control Name": cw?.controlmap_control_name || "",
-        "ControlMap Notes": cw?.controlmap_notes || "",
-        Confidence: cw?.confidence ?? "",
-        "Review Status": cw?.review_status || "Not Started",
-      };
-    });
-    downloadCSV("controlmap-crosswalk.csv", rows);
+  function exportCSV() {
+    const sourceName = frameworks.find((f) => f.id === source)?.name ?? "source";
+    const targetName = frameworks.find((f) => f.id === target)?.name ?? "target";
+    const rows = filtered.map((cw) => ({
+      [`${sourceName} Ref`]: cw.source?.control_ref ?? "",
+      [`${sourceName} Description`]: cw.source?.description ?? "",
+      [`${targetName} Ref`]: cw.target?.control_ref ?? "",
+      [`${targetName} Description`]: cw.target?.description ?? "",
+      "Mapping Type": cw.mapping_type,
+    }));
+    downloadCSV(`${sourceName}-to-${targetName}.csv`.replace(/\s+/g, "-"), rows);
   }
 
   return (
     <Layout>
       <PageHeader
-        title="ControlMap Crosswalk"
-        description="Map Secureframe-derived controls to ControlMap baseline controls."
-        actions={<Button size="sm" onClick={exportCrosswalk}>Export</Button>}
+        title="Crosswalks"
+        description="Browse mappings between framework control catalogs. Read-only for v0; ControlMap integration is the next step."
+        actions={
+          <Button size="sm" onClick={exportCSV} disabled={filtered.length === 0}>
+            <Download className="h-4 w-4" /> Export CSV
+          </Button>
+        }
       />
 
       <Card className="mb-3">
-        <CardContent className="p-3 flex gap-2">
-          <Input
-            placeholder="Search control code or description…"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="max-w-sm"
-          />
-          <Select value={statusFilter} onValueChange={setStatusFilter}>
-            <SelectTrigger className="w-44"><SelectValue /></SelectTrigger>
+        <CardContent className="p-3 flex flex-wrap gap-2">
+          <div className="flex items-center gap-1.5">
+            <span className="text-xs text-muted-foreground">Source</span>
+            <Select value={source} onValueChange={setSource}>
+              <SelectTrigger className="w-44 h-8 text-xs"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {frameworks.map((f) => (
+                  <SelectItem key={f.id} value={f.id}>{f.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <span className="text-xs text-muted-foreground">Target</span>
+            <Select value={target || "all"} onValueChange={(v) => setTarget(v === "all" ? "" : v)}>
+              <SelectTrigger className="w-44 h-8 text-xs"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All targets</SelectItem>
+                {frameworks
+                  .filter((f) => f.id !== source)
+                  .map((f) => (
+                    <SelectItem key={f.id} value={f.id}>{f.name}</SelectItem>
+                  ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <Select value={mappingType} onValueChange={setMappingType}>
+            <SelectTrigger className="w-36 h-8 text-xs"><SelectValue /></SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">All statuses</SelectItem>
-              {STATUSES.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+              <SelectItem value="all">All types</SelectItem>
+              <SelectItem value="direct">Direct</SelectItem>
+              <SelectItem value="inherited">Inherited</SelectItem>
+              <SelectItem value="effective">Effective</SelectItem>
+              <SelectItem value="related">Related</SelectItem>
+              <SelectItem value="equivalent">Equivalent</SelectItem>
+              <SelectItem value="partial">Partial</SelectItem>
             </SelectContent>
           </Select>
+          <Input
+            placeholder="Search refs or descriptions…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="max-w-sm h-8"
+          />
         </CardContent>
       </Card>
 
@@ -100,70 +166,36 @@ export default function Crosswalk() {
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead className="w-28">Code</TableHead>
-              <TableHead className="w-[28%]">Secureframe Description</TableHead>
-              <TableHead>ControlMap Control Name</TableHead>
-              <TableHead>Notes</TableHead>
-              <TableHead className="w-24">Conf.</TableHead>
-              <TableHead className="w-40">Status</TableHead>
+              <TableHead className="w-32">Source</TableHead>
+              <TableHead>Source Description</TableHead>
+              <TableHead className="w-32">Target</TableHead>
+              <TableHead>Target Description</TableHead>
+              <TableHead className="w-28">Type</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
-            {visible.slice(0, 200).map((c) => {
-              const cw = byControl.get(c.id);
-              return (
-                <TableRow key={c.id}>
-                  <TableCell className="font-mono text-xs align-top pt-3">{c.control_code}</TableCell>
-                  <TableCell className="text-xs align-top pt-3">{c.description}</TableCell>
-                  <TableCell>
-                    <Input
-                      value={cw?.controlmap_control_name || ""}
-                      onChange={(e) => update(c.id, { controlmap_control_name: e.target.value })}
-                      className="h-8 text-xs"
-                    />
-                  </TableCell>
-                  <TableCell>
-                    <Textarea
-                      value={cw?.controlmap_notes || ""}
-                      onChange={(e) => update(c.id, { controlmap_notes: e.target.value })}
-                      className="text-xs min-h-[40px]"
-                    />
-                  </TableCell>
-                  <TableCell>
-                    <Input
-                      type="number"
-                      min={0}
-                      max={1}
-                      step={0.05}
-                      value={cw?.confidence ?? 0}
-                      onChange={(e) => update(c.id, { confidence: Number(e.target.value) })}
-                      className="h-8 text-xs"
-                    />
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex gap-1">
-                      <Select
-                        value={cw?.review_status || "Not Started"}
-                        onValueChange={(v) => update(c.id, { review_status: v as CrosswalkStatus })}
-                      >
-                        <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
-                        <SelectContent>
-                          {STATUSES.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
-                        </SelectContent>
-                      </Select>
-                      {cw && (
-                        <Button size="sm" variant="ghost" onClick={() => deleteCrosswalk(cw.id)}>×</Button>
-                      )}
-                    </div>
+            {crosswalksQuery.isLoading ? (
+              <TableRow><TableCell colSpan={5} className="py-10 text-center text-sm text-muted-foreground">Loading…</TableCell></TableRow>
+            ) : filtered.length === 0 ? (
+              <TableRow><TableCell colSpan={5} className="py-10 text-center text-sm text-muted-foreground">No crosswalks for this filter.</TableCell></TableRow>
+            ) : (
+              filtered.slice(0, 500).map((cw) => (
+                <TableRow key={cw.id}>
+                  <TableCell className="font-mono text-xs align-top pt-3">{cw.source?.control_ref}</TableCell>
+                  <TableCell className="text-xs align-top pt-3">{cw.source?.description}</TableCell>
+                  <TableCell className="font-mono text-xs align-top pt-3">{cw.target?.control_ref}</TableCell>
+                  <TableCell className="text-xs align-top pt-3">{cw.target?.description}</TableCell>
+                  <TableCell className="align-top pt-3">
+                    <Badge variant="secondary" className="text-[10px]">{cw.mapping_type}</Badge>
                   </TableCell>
                 </TableRow>
-              );
-            })}
+              ))
+            )}
           </TableBody>
         </Table>
-        {visible.length > 200 && (
+        {filtered.length > 500 && (
           <div className="p-3 text-xs text-muted-foreground text-center">
-            Showing first 200 of {visible.length}. Refine search to narrow.
+            Showing first 500 of {filtered.length}. Refine filters to narrow.
           </div>
         )}
       </Card>
