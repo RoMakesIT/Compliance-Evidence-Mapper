@@ -23,10 +23,6 @@ npm run dev
 
 App runs at http://localhost:8080.
 
-## AI-assisted development
-
-This project is developed with Claude Code. Conventions, guardrails, and architecture notes are in [CLAUDE.md](./CLAUDE.md).
-
 ## Roadmap
 
 - v0: Local Supabase + initial schema (companies, frameworks, controls, evidence)
