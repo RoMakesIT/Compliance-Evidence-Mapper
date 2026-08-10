@@ -1,6 +1,6 @@
-# CLAUDE.md
+# Code.md
 
-Guardrails and context for Claude Code working in this repo.
+Guardrails and context for Coding assistants working in this repo.
 
 ## Project
 
